@@ -14,7 +14,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.WebtoonMap"
         android:usesCleartextTraffic="false">
-        <activity android:name=".ui.VideoPlayerActivity" />
+        <activity
+            android:name=".ui.VideoPlayerActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize" />
         <activity
             android:name=".activation.ActivationActivity"
             android:exported="false"
