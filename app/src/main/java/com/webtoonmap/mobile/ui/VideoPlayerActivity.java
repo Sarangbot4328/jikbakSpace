@@ -27,6 +27,7 @@ public final class VideoPlayerActivity extends AppCompatActivity {
     private VideoView player;
     private View playerRoot;
     private View toolbar;
+    private View exitFullscreenButton;
     private int resumePosition;
     private boolean fullscreen;
     private boolean unlockAfterPortrait;
@@ -36,9 +37,11 @@ public final class VideoPlayerActivity extends AppCompatActivity {
         setContentView(R.layout.activity_video_player);
         playerRoot = findViewById(R.id.player_root);
         toolbar = findViewById(R.id.player_toolbar);
+        exitFullscreenButton = findViewById(R.id.player_exit_fullscreen);
         SystemBarInsets.apply(this, playerRoot, true);
         findViewById(R.id.player_back).setOnClickListener(v -> finish());
         findViewById(R.id.player_fullscreen).setOnClickListener(v -> enterLandscapeFullscreen());
+        exitFullscreenButton.setOnClickListener(v -> exitLandscapeFullscreen());
         TextView title = findViewById(R.id.player_title);
         title.setText(getIntent().getStringExtra(EXTRA_TITLE));
         player = findViewById(R.id.video_player);
@@ -88,6 +91,7 @@ public final class VideoPlayerActivity extends AppCompatActivity {
     private void applyFullscreenUi(boolean enabled) {
         fullscreen = enabled;
         toolbar.setVisibility(enabled ? View.GONE : View.VISIBLE);
+        exitFullscreenButton.setVisibility(enabled ? View.VISIBLE : View.GONE);
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
                 getWindow(), getWindow().getDecorView());
         if (enabled) {

@@ -1,23 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/player_root" android:layout_width="match_parent"
-    android:layout_height="match_parent" android:background="#000000" android:orientation="vertical">
-    <LinearLayout android:id="@+id/player_toolbar"
-        android:layout_width="match_parent" android:layout_height="56dp"
-        android:background="@color/surface" android:gravity="center_vertical"
-        android:orientation="horizontal" android:paddingHorizontal="8dp">
-        <Button android:id="@+id/player_back" style="?android:attr/borderlessButtonStyle"
-            android:layout_width="64dp" android:layout_height="match_parent"
-            android:text="뒤로" android:textAllCaps="false" />
-        <TextView android:id="@+id/player_title" android:layout_width="0dp"
-            android:layout_height="wrap_content" android:layout_weight="1"
-            android:ellipsize="end" android:maxLines="1" android:textColor="@color/text_primary"
-            android:textSize="16sp" android:textStyle="bold" />
-        <Button android:id="@+id/player_fullscreen" style="?android:attr/borderlessButtonStyle"
-            android:layout_width="112dp" android:layout_height="match_parent"
-            android:text="전체화면" android:textAllCaps="false" />
+    android:layout_height="match_parent" android:background="#000000">
+    <LinearLayout android:id="@+id/player_content"
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        android:orientation="vertical">
+        <LinearLayout android:id="@+id/player_toolbar"
+            android:layout_width="match_parent" android:layout_height="56dp"
+            android:background="@color/surface" android:gravity="center_vertical"
+            android:orientation="horizontal" android:paddingHorizontal="8dp">
+            <Button android:id="@+id/player_back" style="?android:attr/borderlessButtonStyle"
+                android:layout_width="64dp" android:layout_height="match_parent"
+                android:text="뒤로" android:textAllCaps="false" />
+            <TextView android:id="@+id/player_title" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1"
+                android:ellipsize="end" android:maxLines="1" android:textColor="@color/text_primary"
+                android:textSize="16sp" android:textStyle="bold" />
+            <Button android:id="@+id/player_fullscreen" style="?android:attr/borderlessButtonStyle"
+                android:layout_width="112dp" android:layout_height="match_parent"
+                android:text="전체화면" android:textAllCaps="false" />
+        </LinearLayout>
+        <VideoView android:id="@+id/video_player" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_gravity="center"
+            android:layout_weight="1" />
     </LinearLayout>
-    <VideoView android:id="@+id/video_player" android:layout_width="match_parent"
-        android:layout_height="0dp" android:layout_gravity="center"
-        android:layout_weight="1" />
-</LinearLayout>
+    <Button android:id="@+id/player_exit_fullscreen"
+        android:layout_width="104dp" android:layout_height="48dp"
+        android:layout_gravity="top|end" android:layout_margin="12dp"
+        android:backgroundTint="#B3000000" android:text="원래대로"
+        android:textAllCaps="false" android:textColor="#FFFFFF"
+        android:visibility="gone" />
+</FrameLayout>
