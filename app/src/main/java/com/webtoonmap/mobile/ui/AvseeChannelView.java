@@ -264,8 +264,7 @@ public final class AvseeChannelView extends FrameLayout {
                     Toast.LENGTH_LONG).show();
             return;
         }
-        String videoUrl = lastMediaUrl;
-        if (sameDocumentUrl(videoUrl, pageUrl)) videoUrl = "";
+        String videoUrl = sameDocumentUrl(lastMediaUrl, pageUrl) ? "" : lastMediaUrl;
         if (videoUrl == null || videoUrl.isEmpty()) {
             new AlertDialog.Builder(activity)
                     .setTitle("영상 주소를 찾지 못했습니다")
