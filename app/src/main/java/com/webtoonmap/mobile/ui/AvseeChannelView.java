@@ -164,7 +164,7 @@ public final class AvseeChannelView extends FrameLayout {
 
         configureWebView();
         navigationButton.setOnClickListener(v -> showNavigationMenu());
-        downloadButton.setOnClickListener(v -> startCleanCapture());
+        downloadButton.setOnClickListener(v -> capturePageInfo(this::confirmDownload));
         stopButton.setOnClickListener(v -> {
             AvseeDownloadService.cancelAll(activity);
             status.setText("다운로드를 중단했습니다.");
@@ -306,7 +306,8 @@ public final class AvseeChannelView extends FrameLayout {
                 pageActors = clean(object.optString("actors", ""));
                 pageDescription = clean(object.optString("description", ""));
                 String detected = clean(object.optString("video", ""));
-                if (isHttpsUrl(detected) && !sameDocumentUrl(detected, webView.getUrl())) {
+                if (isLikelyDomMediaUrl(detected) &&
+                        !sameDocumentUrl(detected, webView.getUrl())) {
                     rememberMedia(detected, Collections.emptyMap());
                 }
             } catch (Exception ignored) { }
@@ -321,7 +322,8 @@ public final class AvseeChannelView extends FrameLayout {
                     Toast.LENGTH_LONG).show();
             return;
         }
-        String videoUrl = sameDocumentUrl(lastMediaUrl, pageUrl) ? "" : lastMediaUrl;
+        String videoUrl = sameDocumentUrl(lastMediaUrl, pageUrl) ||
+                isDocumentOrPlayerUrl(lastMediaUrl) || lastMediaScore < 60 ? "" : lastMediaUrl;
         if (videoUrl == null || videoUrl.isEmpty()) {
             new AlertDialog.Builder(activity)
                     .setTitle("영상 주소를 찾지 못했습니다")
@@ -467,16 +469,43 @@ public final class AvseeChannelView extends FrameLayout {
     private static int scoreMediaCandidate(String url, Map<String, String> headers) {
         String lower = url == null ? "" : url.toLowerCase(Locale.US);
         String accept = header(headers, "Accept").toLowerCase(Locale.US);
+        String fetchDest = header(headers, "Sec-Fetch-Dest").toLowerCase(Locale.US);
         int score = 0;
         if (lower.matches(".*\\.mp4(\\?.*)?(#.*)?$")) score += 100;
         else if (lower.matches(".*\\.(webm|m4v|mov)(\\?.*)?(#.*)?$")) score += 60;
         else if (lower.contains(".m3u8")) score += 10;
         if (accept.contains("video/")) score += 80;
+        if ("video".equals(fetchDest)) score += 80;
         if (!header(headers, "Range").isEmpty()) score += 30;
         if (lower.matches(".*(doubleclick|googlesyndication|advert|/ads?[/?._-]|vast|pre-?roll|popunder|preview|trailer|sample|thumb).*")) {
             score -= 120;
         }
         return score;
+    }
+
+    private static boolean isDocumentOrPlayerUrl(String url) {
+        if (url == null || url.trim().isEmpty()) return false;
+        try {
+            String path = Uri.parse(url).getPath();
+            String lower = path == null ? "" : path.toLowerCase(Locale.US);
+            return lower.endsWith(".php") || lower.endsWith(".html") ||
+                    lower.endsWith(".htm") || lower.contains("/player/");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isLikelyDomMediaUrl(String url) {
+        if (!isHttpsUrl(url) || isDocumentOrPlayerUrl(url)) return false;
+        if (isMediaUrl(url)) return true;
+        try {
+            String path = Uri.parse(url).getPath();
+            String lower = path == null ? "" : path.toLowerCase(Locale.US);
+            return lower.contains("/video/") || lower.contains("/stream/") ||
+                    lower.contains("/media/");
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private static boolean isMediaUrl(String url) {
@@ -487,13 +516,14 @@ public final class AvseeChannelView extends FrameLayout {
 
     private static boolean isMediaRequest(WebResourceRequest request) {
         String url = request.getUrl().toString();
-        if (!isHttpsUrl(url)) return false;
+        if (!isHttpsUrl(url) || isDocumentOrPlayerUrl(url)) return false;
         if (isMediaUrl(url)) return true;
         if (request.isForMainFrame()) return false;
         Map<String, String> headers = request.getRequestHeaders();
         String accept = header(headers, "Accept").toLowerCase(Locale.US);
         String range = header(headers, "Range");
-        return !range.isEmpty() || accept.contains("video/") ||
+        String fetchDest = header(headers, "Sec-Fetch-Dest").toLowerCase(Locale.US);
+        return !range.isEmpty() || "video".equals(fetchDest) || accept.contains("video/") ||
                 accept.contains("application/vnd.apple.mpegurl") ||
                 accept.contains("application/x-mpegurl");
     }
