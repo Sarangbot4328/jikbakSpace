@@ -18,6 +18,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -47,6 +48,7 @@ public final class AvseeChannelView extends FrameLayout {
             "var m=function(n){var e=q('meta[property=\\\"'+n+'\\\"]');return e?e.content:''};" +
             "var v=q('video[src],video source[src],source[src*=\\\".mp4\\\"]');" +
             "var u=v?(v.currentSrc||v.src||v.getAttribute('src')||''):'';" +
+            "if(u&&u.indexOf('blob:')===0)u='';" +
             "if(!u&&performance&&performance.getEntriesByType){var a=performance.getEntriesByType('resource');" +
             "for(var i=a.length-1;i>=0;i--){if(/\\.(mp4|webm|m4v|mov|m3u8)(\\?|$)/i.test(a[i].name)){u=a[i].name;break}}}" +
             "var d=q('meta[name=description]');var k=q('meta[name=keywords]');" +
@@ -59,6 +61,7 @@ public final class AvseeChannelView extends FrameLayout {
     private final WebView webView;
     private final ProgressBar progress;
     private final TextView status;
+    private final Button navigationButton;
     private final Button downloadButton;
     private final Button stopButton;
     private volatile String lastMediaUrl = "";
@@ -124,6 +127,17 @@ public final class AvseeChannelView extends FrameLayout {
         stopButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(198, 40, 40)));
         actions.addView(stopButton, new LinearLayout.LayoutParams(dp(92), dp(52)));
 
+        navigationButton = new Button(activity);
+        navigationButton.setText("\uC774\uB3D9 \u25BE");
+        navigationButton.setTextColor(Color.WHITE);
+        navigationButton.setTextSize(14);
+        navigationButton.setAllCaps(false);
+        navigationButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(70, 78, 90)));
+        LinearLayout.LayoutParams navigationParams = new LinearLayout.LayoutParams(dp(78), dp(52));
+        navigationParams.setMarginStart(dp(8));
+        actions.addView(navigationButton, navigationParams);
+
+
         downloadButton = new Button(activity);
         downloadButton.setText("영상 다운로드");
         downloadButton.setTextColor(Color.WHITE);
@@ -140,6 +154,7 @@ public final class AvseeChannelView extends FrameLayout {
         addView(actions, actionParams);
 
         configureWebView();
+        navigationButton.setOnClickListener(v -> showNavigationMenu());
         downloadButton.setOnClickListener(v -> capturePageInfo(this::confirmDownload));
         stopButton.setOnClickListener(v -> {
             AvseeDownloadService.cancelAll(activity);
@@ -229,7 +244,9 @@ public final class AvseeChannelView extends FrameLayout {
                 pageActors = clean(object.optString("actors", ""));
                 pageDescription = clean(object.optString("description", ""));
                 String detected = clean(object.optString("video", ""));
-                if (isMediaUrl(detected)) rememberMedia(detected, Collections.emptyMap());
+                if (isMediaUrl(detected) || isHttpsUrl(detected)) {
+                    rememberMedia(detected, Collections.emptyMap());
+                }
             } catch (Exception ignored) { }
             if (after != null) after.run();
         });
@@ -237,7 +254,7 @@ public final class AvseeChannelView extends FrameLayout {
 
     private void confirmDownload() {
         String pageUrl = webView.getUrl();
-        if (pageUrl == null || !AvseeSettings.isConfiguredHost(activity, pageUrl)) {
+        if (!isHttpsUrl(pageUrl)) {
             Toast.makeText(activity, "설정한 AVSee 사이트의 영상 페이지에서 사용해 주세요.",
                     Toast.LENGTH_LONG).show();
             return;
@@ -281,9 +298,37 @@ public final class AvseeChannelView extends FrameLayout {
         stopButton.setVisibility(running ? View.VISIBLE : View.GONE);
         downloadButton.setText(running ? "대기열 추가" : "영상 다운로드");
         String url = webView.getUrl();
-        downloadButton.setVisibility(url != null && AvseeSettings.isConfiguredHost(activity, url)
+        boolean guidePage = url != null && AvseeSettings.isConfiguredHost(activity, url);
+        boolean mediaDetected = lastMediaUrl != null && !lastMediaUrl.isEmpty();
+        downloadButton.setVisibility(isHttpsUrl(url) && (!guidePage || mediaDetected)
                 ? View.VISIBLE : View.GONE);
     }
+
+    private void showNavigationMenu() {
+        PopupMenu popup = new PopupMenu(activity, navigationButton);
+        popup.getMenu().add(0, 1, 0, "\uB4A4\uB85C \uAC00\uAE30")
+                .setEnabled(webView.canGoBack());
+        popup.getMenu().add(0, 2, 1, "\uC55E\uC73C\uB85C \uAC00\uAE30")
+                .setEnabled(webView.canGoForward());
+        popup.getMenu().add(0, 3, 2, "\uBA54\uC778\uC73C\uB85C \uAC00\uAE30");
+        popup.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) {
+                webView.goBack();
+                return true;
+            }
+            if (item.getItemId() == 2) {
+                webView.goForward();
+                return true;
+            }
+            if (item.getItemId() == 3) {
+                goHome();
+                return true;
+            }
+            return false;
+        });
+        popup.show();
+    }
+
 
     public boolean canGoBack() { return webView.canGoBack(); }
     public void goBack() { webView.goBack(); }
@@ -324,6 +369,16 @@ public final class AvseeChannelView extends FrameLayout {
         if (url == null || url.isEmpty() || url.startsWith("blob:")) return false;
         String lower = url.toLowerCase(Locale.US);
         return lower.matches(".*\\.(mp4|webm|m4v|mov|m3u8)(\\?.*)?$") || lower.contains("/video/");
+    }
+
+    private static boolean isHttpsUrl(String url) {
+        if (url == null || url.trim().isEmpty()) return false;
+        try {
+            Uri uri = Uri.parse(url);
+            return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private static String header(Map<String, String> headers, String name) {
