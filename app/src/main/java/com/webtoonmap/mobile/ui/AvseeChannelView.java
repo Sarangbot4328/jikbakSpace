@@ -79,6 +79,7 @@ public final class AvseeChannelView extends FrameLayout {
     private boolean receiverRegistered;
     private boolean clearHistoryOnNextPage;
     private boolean cleanCaptureInProgress;
+    private int cleanCaptureAttempts;
     private int lastMediaScore = Integer.MIN_VALUE;
     private String lockedContentHost = "";
 
@@ -235,11 +236,8 @@ public final class AvseeChannelView extends FrameLayout {
                 if (cleanCaptureInProgress) {
                     view.getSettings().setJavaScriptEnabled(true);
                     status.setText("광고 제외 페이지에서 본 영상 주소를 확인하는 중…");
-                    postDelayed(() -> capturePageInfo(() -> {
-                        cleanCaptureInProgress = false;
-                        updateButtons();
-                        confirmDownload();
-                    }), 350L);
+                    cleanCaptureAttempts = 0;
+                    postDelayed(AvseeChannelView.this::continueCleanCapture, 1000L);
                     return;
                 }
                 capturePageInfo(null);
@@ -253,6 +251,7 @@ public final class AvseeChannelView extends FrameLayout {
         String pageUrl = webView.getUrl();
         if (!isHttpsUrl(pageUrl) || cleanCaptureInProgress) return;
         cleanCaptureInProgress = true;
+        cleanCaptureAttempts = 0;
         lastMediaUrl = "";
         lastMediaHeaders = Collections.emptyMap();
         lastMediaScore = Integer.MIN_VALUE;
@@ -275,6 +274,23 @@ public final class AvseeChannelView extends FrameLayout {
             status.setText(lower.contains(".m3u8") ?
                     "HLS(m3u8) 영상이 감지됐습니다." : "영상 주소 감지 완료 · 다운로드할 수 있습니다.");
             updateButtons();
+        });
+    }
+
+    private void continueCleanCapture() {
+        if (!cleanCaptureInProgress) return;
+        capturePageInfo(() -> {
+            cleanCaptureAttempts += 1;
+            boolean strongCandidate = lastMediaUrl != null && !lastMediaUrl.isEmpty() &&
+                    lastMediaScore >= 60;
+            if ((strongCandidate && cleanCaptureAttempts >= 4) || cleanCaptureAttempts >= 12) {
+                cleanCaptureInProgress = false;
+                updateButtons();
+                confirmDownload();
+                return;
+            }
+            status.setText("본 영상 주소를 확인하는 중… " + cleanCaptureAttempts + "/12");
+            postDelayed(this::continueCleanCapture, 900L);
         });
     }
 
@@ -383,6 +399,7 @@ public final class AvseeChannelView extends FrameLayout {
     public void goHome() {
         clearHistoryOnNextPage = true;
         cleanCaptureInProgress = false;
+        cleanCaptureAttempts = 0;
         lockedContentHost = "";
         webView.getSettings().setJavaScriptEnabled(true);
         webView.stopLoading();
@@ -517,7 +534,7 @@ public final class AvseeChannelView extends FrameLayout {
             for (String part : cookieHeader.split(";")) {
                 String item = part.trim();
                 int equals = item.indexOf('=');
-                if (equals > 0) jar.put(item.substring(0, equals).trim(), item.substring(equals + 1).trim());
+                if (equals > 0) jar.putIfAbsent(item.substring(0, equals).trim(), item.substring(equals + 1).trim());
             }
         }
         StringBuilder out = new StringBuilder();

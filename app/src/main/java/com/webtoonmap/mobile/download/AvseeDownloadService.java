@@ -165,25 +165,13 @@ public final class AvseeDownloadService extends Service {
 
     private long downloadFile(String source, File destination, Job job, boolean reportProgress)
             throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(source).openConnection();
-        activeConnection = connection;
-        connection.setInstanceFollowRedirects(true);
-        connection.setConnectTimeout(20000);
-        connection.setReadTimeout(60000);
-        connection.setRequestProperty("Accept", reportProgress ? "*/*" : "image/*,*/*;q=0.8");
-        connection.setRequestProperty("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8");
-        if (job.referer != null && !job.referer.isEmpty()) {
-            connection.setRequestProperty("Referer", job.referer);
-            String origin = originOf(job.referer);
-            if (!origin.isEmpty()) connection.setRequestProperty("Origin", origin);
-        }
-        if (job.cookie != null && !job.cookie.isEmpty()) connection.setRequestProperty("Cookie", job.cookie);
-        if (job.userAgent != null && !job.userAgent.isEmpty()) connection.setRequestProperty("User-Agent", job.userAgent);
+        HttpURLConnection connection = openFollowingRedirects(source, job, reportProgress);
         int status = connection.getResponseCode();
         if (status < 200 || status >= 300) throw new IllegalStateException("영상 서버 접근 실패 · HTTP " + status);
         String type = connection.getContentType();
         if (reportProgress && type != null && type.toLowerCase(Locale.US).contains("text/html")) {
-            throw new IllegalStateException("영상 대신 HTML이 반환되었습니다. 영상을 재생한 직후 다시 시도하세요.");
+            throw new IllegalStateException("영상 대신 HTML이 반환되었습니다. 요청: " +
+                    describeUrl(source) + " · 최종: " + describeUrl(connection.getURL().toString()));
         }
         long total = connection.getContentLengthLong();
         long received = 0L;
@@ -212,6 +200,56 @@ public final class AvseeDownloadService extends Service {
             if (activeConnection == connection) activeConnection = null;
         }
         return received;
+    }
+
+    private HttpURLConnection openFollowingRedirects(String source, Job job, boolean reportProgress)
+            throws Exception {
+        URL current = new URL(source);
+        for (int redirect = 0; redirect < 8; redirect++) {
+            HttpURLConnection connection = (HttpURLConnection) current.openConnection();
+            activeConnection = connection;
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(20000);
+            connection.setReadTimeout(60000);
+            connection.setRequestProperty("Accept", reportProgress ? "*/*" : "image/*,*/*;q=0.8");
+            connection.setRequestProperty("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8");
+            if (reportProgress) connection.setRequestProperty("Range", "bytes=0-");
+            if (job.referer != null && !job.referer.isEmpty()) {
+                connection.setRequestProperty("Referer", job.referer);
+                String origin = originOf(job.referer);
+                if (!origin.isEmpty()) connection.setRequestProperty("Origin", origin);
+            }
+            if (job.cookie != null && !job.cookie.isEmpty()) {
+                connection.setRequestProperty("Cookie", job.cookie);
+            }
+            if (job.userAgent != null && !job.userAgent.isEmpty()) {
+                connection.setRequestProperty("User-Agent", job.userAgent);
+            }
+            int status = connection.getResponseCode();
+            if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+                String location = connection.getHeaderField("Location");
+                if (location == null || location.trim().isEmpty()) return connection;
+                URL next = new URL(current, location);
+                connection.disconnect();
+                if (activeConnection == connection) activeConnection = null;
+                current = next;
+                continue;
+            }
+            return connection;
+        }
+        throw new IllegalStateException("영상 주소의 리다이렉트가 너무 많습니다.");
+    }
+
+    private static String describeUrl(String value) {
+        try {
+            URL parsed = new URL(value);
+            String path = parsed.getPath();
+            if (path == null || path.isEmpty()) path = "/";
+            if (path.length() > 80) path = path.substring(0, 77) + "...";
+            return parsed.getHost() + path;
+        } catch (Exception ignored) {
+            return "알 수 없는 주소";
+        }
     }
 
     private static String originOf(String referer) {
