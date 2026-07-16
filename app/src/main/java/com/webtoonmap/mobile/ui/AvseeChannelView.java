@@ -78,6 +78,9 @@ public final class AvseeChannelView extends FrameLayout {
     private String pageDescription = "";
     private boolean receiverRegistered;
     private boolean clearHistoryOnNextPage;
+    private boolean cleanCaptureInProgress;
+    private int lastMediaScore = Integer.MIN_VALUE;
+    private String lockedContentHost = "";
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -160,7 +163,7 @@ public final class AvseeChannelView extends FrameLayout {
 
         configureWebView();
         navigationButton.setOnClickListener(v -> showNavigationMenu());
-        downloadButton.setOnClickListener(v -> capturePageInfo(this::confirmDownload));
+        downloadButton.setOnClickListener(v -> startCleanCapture());
         stopButton.setOnClickListener(v -> {
             AvseeDownloadService.cancelAll(activity);
             status.setText("다운로드를 중단했습니다.");
@@ -177,6 +180,8 @@ public final class AvseeChannelView extends FrameLayout {
         settings.setDatabaseEnabled(true);
         settings.setLoadsImagesAutomatically(true);
         settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setUserAgentString(MOBILE_UA);
         CookieManager.getInstance().setAcceptCookie(true);
@@ -192,14 +197,23 @@ public final class AvseeChannelView extends FrameLayout {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 lastMediaUrl = "";
                 lastMediaHeaders = Collections.emptyMap();
-                status.setText("페이지를 불러오는 중…");
+                lastMediaScore = Integer.MIN_VALUE;
+                status.setText(cleanCaptureInProgress ?
+                        "광고를 제외하고 본 영상 주소를 찾는 중…" : "페이지를 불러오는 중…");
                 updateButtons();
             }
 
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme();
-                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) return false;
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    if (request.isForMainFrame() && shouldBlockExternalNavigation(uri)) {
+                        Toast.makeText(activity, "외부 광고 페이지 이동을 차단했습니다.",
+                                Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                    return false;
+                }
                 try { activity.startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
                 catch (Exception ignored) { }
                 return true;
@@ -217,6 +231,17 @@ public final class AvseeChannelView extends FrameLayout {
                     view.clearHistory();
                     clearHistoryOnNextPage = false;
                 }
+                rememberContentHost(url);
+                if (cleanCaptureInProgress) {
+                    view.getSettings().setJavaScriptEnabled(true);
+                    status.setText("광고 제외 페이지에서 본 영상 주소를 확인하는 중…");
+                    postDelayed(() -> capturePageInfo(() -> {
+                        cleanCaptureInProgress = false;
+                        updateButtons();
+                        confirmDownload();
+                    }), 350L);
+                    return;
+                }
                 capturePageInfo(null);
                 status.setText("영상을 재생하면 다운로드 주소를 자동으로 감지합니다.");
                 updateButtons();
@@ -224,10 +249,26 @@ public final class AvseeChannelView extends FrameLayout {
         });
     }
 
+    private void startCleanCapture() {
+        String pageUrl = webView.getUrl();
+        if (!isHttpsUrl(pageUrl) || cleanCaptureInProgress) return;
+        cleanCaptureInProgress = true;
+        lastMediaUrl = "";
+        lastMediaHeaders = Collections.emptyMap();
+        lastMediaScore = Integer.MIN_VALUE;
+        status.setText("광고를 제외하고 본 영상 주소를 찾는 중…");
+        webView.getSettings().setJavaScriptEnabled(false);
+        webView.reload();
+        updateButtons();
+    }
+
     private void rememberMedia(String url, Map<String, String> headers) {
         String lower = url.toLowerCase(Locale.US);
         String current = lastMediaUrl.toLowerCase(Locale.US);
+        int score = scoreMediaCandidate(url, headers);
+        if (score < lastMediaScore) return;
         if (current.contains(".mp4") && lower.contains(".m3u8")) return;
+        lastMediaScore = score;
         lastMediaUrl = url;
         lastMediaHeaders = headers == null ? Collections.emptyMap() : new HashMap<>(headers);
         post(() -> {
@@ -301,7 +342,9 @@ public final class AvseeChannelView extends FrameLayout {
     private void updateButtons() {
         boolean running = AvseeDownloadService.isRunning();
         stopButton.setVisibility(running ? View.VISIBLE : View.GONE);
-        downloadButton.setText(running ? "대기열 추가" : "영상 다운로드");
+        downloadButton.setText(cleanCaptureInProgress ? "영상 찾는 중…" :
+                (running ? "대기열 추가" : "영상 다운로드"));
+        downloadButton.setEnabled(!cleanCaptureInProgress);
         String url = webView.getUrl();
         boolean guidePage = url != null && AvseeSettings.isConfiguredHost(activity, url);
         boolean mediaDetected = lastMediaUrl != null && !lastMediaUrl.isEmpty();
@@ -339,6 +382,9 @@ public final class AvseeChannelView extends FrameLayout {
     public void goBack() { webView.goBack(); }
     public void goHome() {
         clearHistoryOnNextPage = true;
+        cleanCaptureInProgress = false;
+        lockedContentHost = "";
+        webView.getSettings().setJavaScriptEnabled(true);
         webView.stopLoading();
         webView.loadUrl(AvseeSettings.getBaseUrl(activity));
     }
@@ -368,6 +414,52 @@ public final class AvseeChannelView extends FrameLayout {
         }
         webView.stopLoading();
         webView.destroy();
+    }
+
+    private void rememberContentHost(String url) {
+        if (!isBoardPostUrl(url)) return;
+        try {
+            String host = Uri.parse(url).getHost();
+            if (host != null && !host.isEmpty()) lockedContentHost = host.toLowerCase(Locale.US);
+        } catch (Exception ignored) { }
+    }
+
+    private boolean shouldBlockExternalNavigation(Uri uri) {
+        if (lockedContentHost.isEmpty() || uri == null || uri.getHost() == null) return false;
+        return !hostMatches(lockedContentHost, uri.getHost());
+    }
+
+    private static boolean hostMatches(String allowed, String actual) {
+        String a = allowed == null ? "" : allowed.toLowerCase(Locale.US);
+        String b = actual == null ? "" : actual.toLowerCase(Locale.US);
+        return !a.isEmpty() && (b.equals(a) || b.endsWith("." + a) || a.endsWith("." + b));
+    }
+
+    private static boolean isBoardPostUrl(String url) {
+        if (!isHttpsUrl(url)) return false;
+        try {
+            Uri uri = Uri.parse(url);
+            String path = uri.getPath();
+            return path != null && path.toLowerCase(Locale.US).endsWith("/board.php") &&
+                    uri.getQueryParameter("wr_id") != null;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static int scoreMediaCandidate(String url, Map<String, String> headers) {
+        String lower = url == null ? "" : url.toLowerCase(Locale.US);
+        String accept = header(headers, "Accept").toLowerCase(Locale.US);
+        int score = 0;
+        if (lower.matches(".*\\.mp4(\\?.*)?(#.*)?$")) score += 100;
+        else if (lower.matches(".*\\.(webm|m4v|mov)(\\?.*)?(#.*)?$")) score += 60;
+        else if (lower.contains(".m3u8")) score += 10;
+        if (accept.contains("video/")) score += 80;
+        if (!header(headers, "Range").isEmpty()) score += 30;
+        if (lower.matches(".*(doubleclick|googlesyndication|advert|/ads?[/?._-]|vast|pre-?roll|popunder|preview|trailer|sample|thumb).*")) {
+            score -= 120;
+        }
+        return score;
     }
 
     private static boolean isMediaUrl(String url) {
