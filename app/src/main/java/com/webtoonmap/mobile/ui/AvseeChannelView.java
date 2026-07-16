@@ -46,9 +46,14 @@ public final class AvseeChannelView extends FrameLayout {
             "(function(){try{" +
             "var q=function(s){return document.querySelector(s)};" +
             "var m=function(n){var e=q('meta[property=\\\"'+n+'\\\"]');return e?e.content:''};" +
-            "var v=q('video[src],video source[src],source[src*=\\\".mp4\\\"]');" +
-            "var u=v?(v.currentSrc||v.src||v.getAttribute('src')||''):'';" +
-            "if(u&&u.indexOf('blob:')===0)u='';" +
+            "var abs=function(x,b){if(!x)return'';try{return new URL(x,b||location.href).href}catch(e){return''}};" +
+            "var docs=[document];for(var di=0;di<docs.length;di++){var fr=docs[di].querySelectorAll('iframe');" +
+            "for(var fi=0;fi<fr.length;fi++){try{if(fr[fi].contentDocument)docs.push(fr[fi].contentDocument)}catch(e){}}}" +
+            "var u='';for(var di=0;di<docs.length&&!u;di++){var doc=docs[di];var vs=doc.querySelectorAll('video');" +
+            "for(var vi=0;vi<vs.length&&!u;vi++){var v=vs[vi];var cs=[v.currentSrc,v.src,v.getAttribute('data-src')];" +
+            "for(var ci=0;ci<cs.length;ci++){var z=abs(cs[ci],doc.baseURI);if(z&&z.indexOf('blob:')!==0&&z.indexOf('data:')!==0&&!/\\.html?(\\?|$)/i.test(z)){u=z;break}}" +
+            "if(!u){var ss=v.querySelectorAll('source');for(var si=0;si<ss.length;si++){var z=abs(ss[si].src,doc.baseURI);if(z&&z.indexOf('blob:')!==0){u=z;break}}}}" +
+            "if(!u){var es=doc.querySelectorAll('source[src],a[href],video[data-src]');for(var ei=0;ei<es.length;ei++){var z=abs(es[ei].src||es[ei].href||es[ei].getAttribute('data-src'),doc.baseURI);if(/\\.(mp4|webm|m4v|mov)(\\?|$)/i.test(z)){u=z;break}}}}" +
             "if(!u&&performance&&performance.getEntriesByType){var a=performance.getEntriesByType('resource');" +
             "for(var i=a.length-1;i>=0;i--){if(/\\.(mp4|webm|m4v|mov|m3u8)(\\?|$)/i.test(a[i].name)){u=a[i].name;break}}}" +
             "var d=q('meta[name=description]');var k=q('meta[name=keywords]');" +
@@ -203,7 +208,7 @@ public final class AvseeChannelView extends FrameLayout {
             @Override public WebResourceResponse shouldInterceptRequest(
                     WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                if (isMediaUrl(url)) rememberMedia(url, request.getRequestHeaders());
+                if (isMediaRequest(request)) rememberMedia(url, request.getRequestHeaders());
                 return super.shouldInterceptRequest(view, request);
             }
 
@@ -244,7 +249,7 @@ public final class AvseeChannelView extends FrameLayout {
                 pageActors = clean(object.optString("actors", ""));
                 pageDescription = clean(object.optString("description", ""));
                 String detected = clean(object.optString("video", ""));
-                if (isMediaUrl(detected) || isHttpsUrl(detected)) {
+                if (isHttpsUrl(detected) && !sameDocumentUrl(detected, webView.getUrl())) {
                     rememberMedia(detected, Collections.emptyMap());
                 }
             } catch (Exception ignored) { }
@@ -260,6 +265,7 @@ public final class AvseeChannelView extends FrameLayout {
             return;
         }
         String videoUrl = lastMediaUrl;
+        if (sameDocumentUrl(videoUrl, pageUrl)) videoUrl = "";
         if (videoUrl == null || videoUrl.isEmpty()) {
             new AlertDialog.Builder(activity)
                     .setTitle("영상 주소를 찾지 못했습니다")
@@ -274,7 +280,7 @@ public final class AvseeChannelView extends FrameLayout {
             return;
         }
         String title = pageTitle.isEmpty() ? clean(webView.getTitle()) : pageTitle;
-        String cookie = firstNonEmpty(header(lastMediaHeaders, "Cookie"),
+        String cookie = mergeCookies(header(lastMediaHeaders, "Cookie"),
                 CookieManager.getInstance().getCookie(videoUrl),
                 CookieManager.getInstance().getCookie(pageUrl));
         String referer = firstNonEmpty(header(lastMediaHeaders, "Referer"), pageUrl);
@@ -368,7 +374,31 @@ public final class AvseeChannelView extends FrameLayout {
     private static boolean isMediaUrl(String url) {
         if (url == null || url.isEmpty() || url.startsWith("blob:")) return false;
         String lower = url.toLowerCase(Locale.US);
-        return lower.matches(".*\\.(mp4|webm|m4v|mov|m3u8)(\\?.*)?$") || lower.contains("/video/");
+        return lower.matches(".*\\.(mp4|webm|m4v|mov|m3u8)(\\?.*)?(#.*)?$");
+    }
+
+    private static boolean isMediaRequest(WebResourceRequest request) {
+        String url = request.getUrl().toString();
+        if (!isHttpsUrl(url)) return false;
+        if (isMediaUrl(url)) return true;
+        if (request.isForMainFrame()) return false;
+        Map<String, String> headers = request.getRequestHeaders();
+        String accept = header(headers, "Accept").toLowerCase(Locale.US);
+        String range = header(headers, "Range");
+        return !range.isEmpty() || accept.contains("video/") ||
+                accept.contains("application/vnd.apple.mpegurl") ||
+                accept.contains("application/x-mpegurl");
+    }
+
+    private static boolean sameDocumentUrl(String first, String second) {
+        if (first == null || second == null) return false;
+        try {
+            String a = Uri.parse(first).buildUpon().fragment(null).build().toString();
+            String b = Uri.parse(second).buildUpon().fragment(null).build().toString();
+            return a.equals(b);
+        } catch (Exception ignored) {
+            return first.equals(second);
+        }
     }
 
     private static boolean isHttpsUrl(String url) {
@@ -387,6 +417,24 @@ public final class AvseeChannelView extends FrameLayout {
             if (name.equalsIgnoreCase(entry.getKey())) return clean(entry.getValue());
         }
         return "";
+    }
+
+    private static String mergeCookies(String... cookieHeaders) {
+        Map<String, String> jar = new HashMap<>();
+        for (String cookieHeader : cookieHeaders) {
+            if (cookieHeader == null) continue;
+            for (String part : cookieHeader.split(";")) {
+                String item = part.trim();
+                int equals = item.indexOf('=');
+                if (equals > 0) jar.put(item.substring(0, equals).trim(), item.substring(equals + 1).trim());
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        for (Map.Entry<String, String> entry : jar.entrySet()) {
+            if (out.length() > 0) out.append("; ");
+            out.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        return out.toString();
     }
 
     private static String firstNonEmpty(String... values) {

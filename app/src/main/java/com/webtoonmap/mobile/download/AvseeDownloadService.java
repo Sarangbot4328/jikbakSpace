@@ -170,8 +170,13 @@ public final class AvseeDownloadService extends Service {
         connection.setInstanceFollowRedirects(true);
         connection.setConnectTimeout(20000);
         connection.setReadTimeout(60000);
-        connection.setRequestProperty("Accept", reportProgress ? "video/*,*/*;q=0.8" : "image/*,*/*;q=0.8");
-        if (job.referer != null && !job.referer.isEmpty()) connection.setRequestProperty("Referer", job.referer);
+        connection.setRequestProperty("Accept", reportProgress ? "*/*" : "image/*,*/*;q=0.8");
+        connection.setRequestProperty("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8");
+        if (job.referer != null && !job.referer.isEmpty()) {
+            connection.setRequestProperty("Referer", job.referer);
+            String origin = originOf(job.referer);
+            if (!origin.isEmpty()) connection.setRequestProperty("Origin", origin);
+        }
         if (job.cookie != null && !job.cookie.isEmpty()) connection.setRequestProperty("Cookie", job.cookie);
         if (job.userAgent != null && !job.userAgent.isEmpty()) connection.setRequestProperty("User-Agent", job.userAgent);
         int status = connection.getResponseCode();
@@ -209,6 +214,17 @@ public final class AvseeDownloadService extends Service {
         return received;
     }
 
+    private static String originOf(String referer) {
+        try {
+            URL parsed = new URL(referer);
+            int port = parsed.getPort();
+            String authority = parsed.getHost() +
+                    (port > 0 && port != parsed.getDefaultPort() ? ":" + port : "");
+            return parsed.getProtocol() + "://" + authority;
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
     private void checkCancelled() throws InterruptedException {
         if (cancelled || Thread.currentThread().isInterrupted()) {
             throw new InterruptedException("cancelled");
