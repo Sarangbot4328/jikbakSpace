@@ -4,10 +4,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.net.Uri;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewParent;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -62,6 +66,14 @@ public final class AvseeChannelView extends FrameLayout {
             "actors:'',pageText:(document.body?document.body.innerText:'').slice(0,5000)});" +
             "}catch(e){return JSON.stringify({error:String(e)})}})()";
 
+    private static final String FULLSCREEN_SCRIPT =
+            "(function(){try{var bind=function(doc){if(!doc||doc.__ddmjFullscreenBound)return;" +
+            "doc.__ddmjFullscreenBound=true;doc.addEventListener('play',function(e){var v=e.target;" +
+            "if(!v||String(v.tagName).toLowerCase()!=='video')return;" +
+            "var f=v.requestFullscreen||v.webkitRequestFullscreen||v.webkitEnterFullscreen;" +
+            "if(f){try{var p=f.call(v);if(p&&p.catch)p.catch(function(){})}catch(x){}}},true);" +
+            "var fs=doc.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){try{bind(fs[i].contentDocument)}catch(x){}}};" +
+            "bind(document)}catch(e){}})()";
     private final MainActivity activity;
     private final WebView webView;
     private final ProgressBar progress;
@@ -82,6 +94,10 @@ public final class AvseeChannelView extends FrameLayout {
     private int cleanCaptureAttempts;
     private int lastMediaScore = Integer.MIN_VALUE;
     private String lockedContentHost = "";
+    private View fullscreenView;
+    private WebChromeClient.CustomViewCallback fullscreenCallback;
+    private int previousSystemUiVisibility;
+    private int previousOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -193,6 +209,14 @@ public final class AvseeChannelView extends FrameLayout {
                 progress.setProgress(newProgress);
                 progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
             }
+
+            @Override public void onShowCustomView(View view, CustomViewCallback callback) {
+                showFullscreen(view, callback);
+            }
+
+            @Override public void onHideCustomView() {
+                exitFullscreen();
+            }
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
@@ -233,6 +257,7 @@ public final class AvseeChannelView extends FrameLayout {
                     clearHistoryOnNextPage = false;
                 }
                 rememberContentHost(url);
+                view.evaluateJavascript(FULLSCREEN_SCRIPT, ignored -> { });
                 if (cleanCaptureInProgress) {
                     view.getSettings().setJavaScriptEnabled(true);
                     status.setText("광고 제외 페이지에서 본 영상 주소를 확인하는 중…");
@@ -344,15 +369,18 @@ public final class AvseeChannelView extends FrameLayout {
         String referer = firstNonEmpty(header(lastMediaHeaders, "Referer"), pageUrl);
         String userAgent = firstNonEmpty(header(lastMediaHeaders, "User-Agent"), MOBILE_UA);
         String finalTitle = title.isEmpty() ? "AVSee 영상" : title;
+        boolean queueing = AvseeDownloadService.isRunning();
         new AlertDialog.Builder(activity)
-                .setTitle("영상 다운로드")
-                .setMessage("‘" + finalTitle + "’ 영상을 기기에 저장합니다.")
+                .setTitle(queueing ? "다운로드 대기열 추가" : "영상 다운로드")
+                .setMessage(queueing ? "‘" + finalTitle + "’ 영상을 현재 다운로드 다음 순서에 추가합니다." :
+                        "‘" + finalTitle + "’ 영상을 기기에 저장합니다.")
                 .setNegativeButton("취소", null)
-                .setPositiveButton("시작", (dialog, which) -> {
+                .setPositiveButton(queueing ? "추가" : "시작", (dialog, which) -> {
                     AvseeDownloadService.enqueue(activity, finalTitle, videoUrl, pageThumb,
                             pageUrl, pageTags, pageActors, pageDescription,
                             referer, cookie, userAgent);
-                    status.setText("다운로드 대기열에 추가했습니다.");
+                    status.setText(queueing ? "다음 영상으로 다운로드 대기열에 추가했습니다." :
+                            "다운로드를 시작했습니다. 다른 영상도 대기열에 추가할 수 있습니다.");
                     updateButtons();
                 }).show();
     }
@@ -408,6 +436,47 @@ public final class AvseeChannelView extends FrameLayout {
         webView.loadUrl(AvseeSettings.getBaseUrl(activity));
     }
 
+    public boolean isFullscreen() { return fullscreenView != null; }
+
+    public void exitFullscreen() {
+        if (fullscreenView == null) return;
+        View view = fullscreenView;
+        fullscreenView = null;
+        ViewParent parent = view.getParent();
+        if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
+        View decor = activity.getWindow().getDecorView();
+        decor.setSystemUiVisibility(previousSystemUiVisibility);
+        activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN |
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        activity.setRequestedOrientation(previousOrientation);
+        WebChromeClient.CustomViewCallback callback = fullscreenCallback;
+        fullscreenCallback = null;
+        if (callback != null) callback.onCustomViewHidden();
+    }
+
+    private void showFullscreen(View view, WebChromeClient.CustomViewCallback callback) {
+        if (fullscreenView != null) {
+            callback.onCustomViewHidden();
+            return;
+        }
+        fullscreenView = view;
+        fullscreenCallback = callback;
+        previousOrientation = activity.getRequestedOrientation();
+        View decor = activity.getWindow().getDecorView();
+        previousSystemUiVisibility = decor.getSystemUiVisibility();
+        ViewParent parent = view.getParent();
+        if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
+        view.setBackgroundColor(Color.BLACK);
+        ((ViewGroup) decor).addView(view, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN |
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (!receiverRegistered) {
@@ -427,6 +496,7 @@ public final class AvseeChannelView extends FrameLayout {
     }
 
     public void destroyWebView() {
+        exitFullscreen();
         if (receiverRegistered) {
             activity.unregisterReceiver(receiver);
             receiverRegistered = false;

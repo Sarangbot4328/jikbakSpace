@@ -54,7 +54,9 @@ public final class MainActivity extends AppCompatActivity {
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
-                if (selectedChannel != 0) {
+                if (naverView.isFullscreen()) {
+                    naverView.exitFullscreen();
+                } else if (selectedChannel != 0) {
                     showNaver();
                 } else if (naverView.canGoBack()) {
                     naverView.goBack();
