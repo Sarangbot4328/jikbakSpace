@@ -35,6 +35,8 @@ public final class AvseeDownloadService extends Service {
     public static final String EXTRA_MESSAGE = "message";
     public static final String EXTRA_DONE = "done";
     public static final String EXTRA_ERROR = "error";
+    public static final String EXTRA_PERCENT = "percent";
+    public static final String EXTRA_TITLE = "title";
 
     private static final String ACTION_ENQUEUE = "enqueue_avsee";
     private static final String CHANNEL_ID = "avsee_download";
@@ -42,12 +44,20 @@ public final class AvseeDownloadService extends Service {
     private static final AtomicInteger PENDING = new AtomicInteger();
     private static volatile boolean cancelled;
     private static volatile HttpURLConnection activeConnection;
+    private static volatile File activeFolder;
+    private static volatile String currentTitle = "";
+    private static volatile String currentMessage = "";
+    private static volatile int currentPercent = -1;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public static boolean isRunning() {
         return PENDING.get() > 0;
     }
+
+    public static String getCurrentTitle() { return currentTitle; }
+    public static String getCurrentMessage() { return currentMessage; }
+    public static int getCurrentPercent() { return currentPercent; }
 
     public static void enqueue(Context context, String title, String videoUrl, String thumbnailUrl,
                                String pageUrl, String tags, String actors, String description,
@@ -72,11 +82,11 @@ public final class AvseeDownloadService extends Service {
         cancelled = true;
         HttpURLConnection connection = activeConnection;
         if (connection != null) connection.disconnect();
-        context.stopService(new Intent(context, AvseeDownloadService.class));
     }
 
     @Override public void onCreate() {
         super.onCreate();
+        AvseeStorage.cleanupIncomplete(this);
         NotificationManager manager = getSystemService(NotificationManager.class);
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID, "AVSee 다운로드", NotificationManager.IMPORTANCE_LOW);
@@ -87,16 +97,20 @@ public final class AvseeDownloadService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null || !ACTION_ENQUEUE.equals(intent.getAction())) return START_NOT_STICKY;
         PENDING.incrementAndGet();
-        startForeground(NOTIFICATION_ID, notification("다운로드 준비 중…", 0, 0));
         Job job = Job.from(intent);
+        startForeground(NOTIFICATION_ID, notification("다운로드 대기 중…", 0, 0));
         executor.execute(() -> {
+            currentTitle = nonEmpty(job.title, "AVSee 영상");
+            currentMessage = "다운로드 준비 중…";
+            currentPercent = 0;
+            sendStatus(currentMessage, false, false);
             try {
                 download(job);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 sendStatus("다운로드가 중단되었습니다.", false, true);
             } catch (Exception error) {
-                String message = error.getMessage();
+                String message = cancelled ? "다운로드가 중단되었습니다." : error.getMessage();
                 if (message == null || message.trim().isEmpty()) message = "다운로드에 실패했습니다.";
                 sendStatus(message, false, true);
             } finally {
@@ -132,6 +146,7 @@ public final class AvseeDownloadService extends Service {
         try {
             checkCancelled();
             folder = AvseeStorage.createVideoFolder(this, job.title);
+            activeFolder = folder;
             File part = new File(folder, "video" + AvseeStorage.extensionFromUrl(job.videoUrl) + ".part");
             File video = new File(folder,
                     "video" + AvseeStorage.extensionFromUrl(job.videoUrl));
@@ -152,10 +167,12 @@ public final class AvseeDownloadService extends Service {
             String createdAt = utcNow();
             db.insert(nonEmpty(job.title, "AVSee 영상"), video.getAbsolutePath(), thumbnailPath,
                     job.pageUrl, job.tags, job.actors, job.description, createdAt, size);
+            if (activeFolder == folder) activeFolder = null;
             sendStatus("다운로드 완료 · " + nonEmpty(job.title, "AVSee 영상"), true, false);
             updateNotification("다운로드 완료", 0, 0);
         } catch (Exception error) {
-            if (folder != null) deleteFolder(folder);
+            if (folder != null) AvseeStorage.deleteFolder(folder);
+            if (activeFolder == folder) activeFolder = null;
             throw error;
         } finally {
             if (wakeLock.isHeld()) wakeLock.release();
@@ -189,6 +206,8 @@ public final class AvseeDownloadService extends Service {
                     if (percent != lastPercent && (total <= 0 || percent % 2 == 0)) {
                         String message = total > 0 ? "다운로드 " + percent + "%" :
                                 "다운로드 " + AvseeStorage.formatBytes(received);
+                        currentMessage = message;
+                        currentPercent = total > 0 ? percent : -1;
                         updateNotification(message, percent, total > 0 ? 100 : 0);
                         sendStatus(message, false, false);
                         lastPercent = percent;
@@ -291,11 +310,16 @@ public final class AvseeDownloadService extends Service {
     }
 
     private void sendStatus(String message, boolean done, boolean error) {
+        currentMessage = message == null ? "" : message;
+        if (done) currentPercent = 100;
+        else if (error) currentPercent = -1;
         Intent intent = new Intent(ACTION_PROGRESS)
                 .setPackage(getPackageName())
-                .putExtra(EXTRA_MESSAGE, message)
+                .putExtra(EXTRA_MESSAGE, currentMessage)
                 .putExtra(EXTRA_DONE, done)
-                .putExtra(EXTRA_ERROR, error);
+                .putExtra(EXTRA_ERROR, error)
+                .putExtra(EXTRA_PERCENT, currentPercent)
+                .putExtra(EXTRA_TITLE, currentTitle);
         sendBroadcast(intent);
     }
 
@@ -309,16 +333,13 @@ public final class AvseeDownloadService extends Service {
         return format.format(new Date());
     }
 
-    private static void deleteFolder(File folder) {
-        File[] files = folder.listFiles();
-        if (files != null) for (File file : files) file.delete();
-        folder.delete();
-    }
-
     @Override public void onDestroy() {
         cancelled = true;
         HttpURLConnection connection = activeConnection;
         if (connection != null) connection.disconnect();
+        File folder = activeFolder;
+        if (folder != null) AvseeStorage.deleteFolder(folder);
+        activeFolder = null;
         PENDING.set(0);
         executor.shutdownNow();
         super.onDestroy();

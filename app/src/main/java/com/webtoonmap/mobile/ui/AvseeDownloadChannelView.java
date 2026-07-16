@@ -11,6 +11,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -37,12 +38,31 @@ public final class AvseeDownloadChannelView extends FrameLayout {
     private final VideoAdapter adapter;
     private final TextView empty;
     private final TextView status;
+    private final View progressPanel;
+    private final TextView progressTitle;
+    private final TextView progressMessage;
+    private final ProgressBar progressBar;
     private final SwipeRefreshLayout swipe;
     private boolean receiverRegistered;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (intent.getBooleanExtra(AvseeDownloadService.EXTRA_DONE, false)) refresh();
+            String message = intent.getStringExtra(AvseeDownloadService.EXTRA_MESSAGE);
+            String title = intent.getStringExtra(AvseeDownloadService.EXTRA_TITLE);
+            int percent = intent.getIntExtra(AvseeDownloadService.EXTRA_PERCENT, -1);
+            boolean done = intent.getBooleanExtra(AvseeDownloadService.EXTRA_DONE, false);
+            boolean error = intent.getBooleanExtra(AvseeDownloadService.EXTRA_ERROR, false);
+            showProgress(title, message, percent);
+            if (done) {
+                refresh();
+                postDelayed(() -> {
+                    if (!AvseeDownloadService.isRunning()) progressPanel.setVisibility(GONE);
+                }, 4000L);
+            } else if (error) {
+                postDelayed(() -> {
+                    if (!AvseeDownloadService.isRunning()) progressPanel.setVisibility(GONE);
+                }, 6000L);
+            }
         }
     };
 
@@ -52,6 +72,10 @@ public final class AvseeDownloadChannelView extends FrameLayout {
         LayoutInflater.from(activity).inflate(R.layout.channel_avsee_downloads, this, true);
         database = new AvseeLibraryDatabase(activity);
         status = findViewById(R.id.video_status);
+        progressPanel = findViewById(R.id.download_progress_panel);
+        progressTitle = findViewById(R.id.download_progress_title);
+        progressMessage = findViewById(R.id.download_progress_message);
+        progressBar = findViewById(R.id.download_progress_bar);
         empty = findViewById(R.id.video_empty);
         swipe = findViewById(R.id.video_swipe);
         RecyclerView list = findViewById(R.id.video_list);
@@ -70,6 +94,30 @@ public final class AvseeDownloadChannelView extends FrameLayout {
         status.setText(videos.isEmpty() ? "저장한 AVSee 영상을 볼 수 있습니다" :
                 "저장된 영상 " + videos.size() + "개");
         swipe.setRefreshing(false);
+    }
+
+    private void syncProgress() {
+        if (!AvseeDownloadService.isRunning()) {
+            progressPanel.setVisibility(GONE);
+            return;
+        }
+        showProgress(AvseeDownloadService.getCurrentTitle(),
+                AvseeDownloadService.getCurrentMessage(),
+                AvseeDownloadService.getCurrentPercent());
+    }
+
+    private void showProgress(String title, String message, int percent) {
+        progressPanel.setVisibility(VISIBLE);
+        progressTitle.setText(title == null || title.trim().isEmpty() ?
+                "AVSee 영상 다운로드" : title.trim());
+        progressMessage.setText(message == null || message.trim().isEmpty() ?
+                "다운로드 준비 중…" : message.trim());
+        if (percent >= 0) {
+            progressBar.setIndeterminate(false);
+            progressBar.setProgress(Math.min(100, percent));
+        } else {
+            progressBar.setIndeterminate(true);
+        }
     }
 
     private void play(AvseeVideo video) {
@@ -106,6 +154,7 @@ public final class AvseeDownloadChannelView extends FrameLayout {
             receiverRegistered = true;
         }
         refresh();
+        syncProgress();
     }
 
     @Override protected void onDetachedFromWindow() {

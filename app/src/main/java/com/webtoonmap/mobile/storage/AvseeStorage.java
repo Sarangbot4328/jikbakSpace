@@ -34,8 +34,34 @@ public final class AvseeStorage {
         File file = new File(filePath);
         File folder = file.getParentFile();
         if (folder == null || !folder.isDirectory()) return;
+        deleteFolder(folder);
+    }
+
+    public static void cleanupIncomplete(Context context) {
+        File[] folders = root(context).listFiles();
+        if (folders == null) return;
+        for (File folder : folders) {
+            if (!folder.isDirectory()) continue;
+            File[] children = folder.listFiles();
+            if (children == null) continue;
+            for (File child : children) {
+                if (child.getName().endsWith(".part")) {
+                    deleteFolder(folder);
+                    break;
+                }
+            }
+        }
+    }
+
+    public static void deleteFolder(File folder) {
+        if (folder == null || !folder.exists()) return;
         File[] children = folder.listFiles();
-        if (children != null) for (File child : children) child.delete();
+        if (children != null) {
+            for (File child : children) {
+                if (child.isDirectory()) deleteFolder(child);
+                else child.delete();
+            }
+        }
         folder.delete();
     }
 

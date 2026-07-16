@@ -46,10 +46,7 @@ public final class MainActivity extends AppCompatActivity {
         downloadsView = new AvseeDownloadChannelView(this);
         settingsView = new AvseeSettingsChannelView(this);
 
-        naverButton.setOnClickListener(v -> {
-            showNaver();
-            naverView.goHome();
-        });
+        naverButton.setOnClickListener(v -> showNaver());
         downloadsButton.setOnClickListener(v -> showDownloads());
         settingsButton.setOnClickListener(v -> showSettings());
         showNaver();
