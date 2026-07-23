@@ -15,8 +15,53 @@
                 android:text="저장한 AVSee 영상을 볼 수 있습니다"
                 android:textColor="@color/text_secondary" android:textSize="12sp" />
         </LinearLayout>
+        <Button android:id="@+id/export_videos" android:layout_width="wrap_content"
+            android:layout_height="42dp" android:text="내보내기" android:textAllCaps="false" />
         <Button android:id="@+id/refresh_videos" android:layout_width="wrap_content"
-            android:layout_height="42dp" android:text="새로고침" android:textAllCaps="false" />
+            android:layout_height="42dp" android:layout_marginStart="4dp"
+            android:text="새로고침" android:textAllCaps="false" />
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/export_selection_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingLeft="12dp"
+        android:paddingTop="6dp"
+        android:paddingRight="12dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone">
+        <TextView
+            android:id="@+id/export_selection_count"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="0개 선택"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+        <Button
+            android:id="@+id/select_all_videos"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="전체 선택"
+            android:textAllCaps="false" />
+        <Button
+            android:id="@+id/export_selected_videos"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="4dp"
+            android:text="내보내기"
+            android:textAllCaps="false" />
+        <Button
+            android:id="@+id/cancel_video_selection"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="4dp"
+            android:text="취소"
+            android:textAllCaps="false" />
     </LinearLayout>
     <LinearLayout
         android:id="@+id/download_progress_panel"

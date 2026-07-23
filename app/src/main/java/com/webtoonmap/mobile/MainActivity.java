@@ -1,10 +1,14 @@
 package com.webtoonmap.mobile;
 
 import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 
@@ -15,6 +19,7 @@ import androidx.core.content.ContextCompat;
 
 import com.webtoonmap.mobile.activation.ActivationActivity;
 import com.webtoonmap.mobile.activation.ActivationStore;
+import com.webtoonmap.mobile.download.AvseeDownloadService;
 import com.webtoonmap.mobile.ui.AvseeDownloadChannelView;
 import com.webtoonmap.mobile.ui.AvseeChannelView;
 import com.webtoonmap.mobile.ui.AvseeSettingsChannelView;
@@ -29,6 +34,17 @@ public final class MainActivity extends AppCompatActivity {
     private AvseeDownloadChannelView downloadsView;
     private AvseeSettingsChannelView settingsView;
     private int selectedChannel = 0;
+    private boolean downloadReceiverRegistered;
+    private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            refreshKeepScreenOnForDownload();
+            if (intent.getBooleanExtra(AvseeDownloadService.EXTRA_DONE, false) ||
+                    intent.getBooleanExtra(AvseeDownloadService.EXTRA_ERROR, false)) {
+                content.postDelayed(MainActivity.this::refreshKeepScreenOnForDownload, 250L);
+            }
+        }
+    };
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         if (!ActivationStore.isActivated(this)) {
@@ -122,6 +138,35 @@ public final class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.POST_NOTIFICATIONS}, 400);
         }
+    }
+
+    public void refreshKeepScreenOnForDownload() {
+        boolean keepAwake = AvseeDownloadService.isRunning() ||
+                (naverView != null && naverView.isFullscreen());
+        if (keepAwake) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (!downloadReceiverRegistered) {
+            ContextCompat.registerReceiver(this, downloadReceiver,
+                    new IntentFilter(AvseeDownloadService.ACTION_PROGRESS),
+                    ContextCompat.RECEIVER_NOT_EXPORTED);
+            downloadReceiverRegistered = true;
+        }
+        refreshKeepScreenOnForDownload();
+    }
+
+    @Override protected void onStop() {
+        if (downloadReceiverRegistered) {
+            unregisterReceiver(downloadReceiver);
+            downloadReceiverRegistered = false;
+        }
+        super.onStop();
     }
 
     @Override protected void onDestroy() {

@@ -53,6 +53,75 @@ public final class AvseeStorage {
         }
     }
 
+    public static CleanupResult clearTemporaryData(Context context) {
+        int removedFiles = 0;
+        int removedFolders = 0;
+        long removedBytes = 0L;
+
+        File[] videoFolders = root(context).listFiles();
+        if (videoFolders != null) {
+            for (File folder : videoFolders) {
+                if (!folder.isDirectory() || !containsPartialFile(folder)) continue;
+                FileStats stats = measure(folder);
+                deleteFolder(folder);
+                if (!folder.exists()) {
+                    removedFiles += stats.files;
+                    removedFolders += stats.folders;
+                    removedBytes += stats.bytes;
+                }
+            }
+        }
+
+        String[] cacheNames = {
+                "shared", "exports", "imports", "import-stage", "download-zips", "viewer"
+        };
+        for (String name : cacheNames) {
+            File folder = new File(context.getCacheDir(), name);
+            if (!folder.exists()) continue;
+            FileStats stats = measure(folder);
+            deleteFolder(folder);
+            if (!folder.exists()) {
+                removedFiles += stats.files;
+                removedFolders += stats.folders;
+                removedBytes += stats.bytes;
+            }
+        }
+        return new CleanupResult(removedFiles, removedFolders, removedBytes);
+    }
+
+    private static boolean containsPartialFile(File folder) {
+        File[] children = folder.listFiles();
+        if (children == null) return false;
+        for (File child : children) {
+            if (child.isDirectory() && containsPartialFile(child)) return true;
+            String name = child.getName().toLowerCase(Locale.US);
+            if (name.endsWith(".part") || name.contains(".part-") || name.endsWith(".tmp")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static FileStats measure(File file) {
+        if (file == null || !file.exists()) return new FileStats();
+        FileStats stats = new FileStats();
+        if (file.isFile()) {
+            stats.files = 1;
+            stats.bytes = file.length();
+            return stats;
+        }
+        stats.folders = 1;
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                FileStats childStats = measure(child);
+                stats.files += childStats.files;
+                stats.folders += childStats.folders;
+                stats.bytes += childStats.bytes;
+            }
+        }
+        return stats;
+    }
     public static void deleteFolder(File folder) {
         if (folder == null || !folder.exists()) return;
         File[] children = folder.listFiles();
@@ -78,9 +147,36 @@ public final class AvseeStorage {
         if (bytes >= 1024L * 1024L * 1024L) {
             return String.format(Locale.KOREA, "%.1f GB", bytes / (1024d * 1024d * 1024d));
         }
-        return String.format(Locale.KOREA, "%.1f MB", bytes / (1024d * 1024d));
+        if (bytes >= 1024L * 1024L) {
+            return String.format(Locale.KOREA, "%.1f MB", bytes / (1024d * 1024d));
+        }
+        if (bytes >= 1024L) {
+            return String.format(Locale.KOREA, "%.1f KB", bytes / 1024d);
+        }
+        return bytes + " B";
     }
 
+    public static final class CleanupResult {
+        public final int removedFiles;
+        public final int removedFolders;
+        public final long removedBytes;
+
+        CleanupResult(int removedFiles, int removedFolders, long removedBytes) {
+            this.removedFiles = removedFiles;
+            this.removedFolders = removedFolders;
+            this.removedBytes = removedBytes;
+        }
+
+        public boolean isEmpty() {
+            return removedFiles == 0 && removedBytes == 0L;
+        }
+    }
+
+    private static final class FileStats {
+        int files;
+        int folders;
+        long bytes;
+    }
     private static String safeName(String title) {
         String value = title == null ? "avsee" : title.trim();
         value = value.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("\\s+", " ");

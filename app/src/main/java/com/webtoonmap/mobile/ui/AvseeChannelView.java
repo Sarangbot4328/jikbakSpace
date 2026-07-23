@@ -576,8 +576,8 @@ public final class AvseeChannelView extends FrameLayout {
         }
         View decor = activity.getWindow().getDecorView();
         decor.setSystemUiVisibility(previousSystemUiVisibility);
-        activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN |
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        activity.refreshKeepScreenOnForDownload();
         activity.setRequestedOrientation(previousOrientation);
         WebChromeClient.CustomViewCallback callback = fullscreenCallback;
         fullscreenCallback = null;
