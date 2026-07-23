@@ -7,6 +7,7 @@ import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Message;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -38,6 +39,7 @@ import com.webtoonmap.mobile.storage.AvseeSettings;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.ByteArrayInputStream;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
@@ -90,9 +92,26 @@ public final class AvseeChannelView extends FrameLayout {
             "}catch(e){return JSON.stringify({error:String(e)})}})()";
 
     private static final String FULLSCREEN_SCRIPT =
-            "(function(){try{var bind=function(doc){if(!doc||doc.__ddmjFullscreenBound)return;" +
+            "(function(){try{if(window.__ddmjGuardBound)return;window.__ddmjGuardBound=true;" +
+            "var marks=['doubleclick','googlesyndication','googleadservices','exoclick','exosrv'," +
+            "'popads','propellerads','adsterra','trafficjunky','juicyads','popcash','/ads/'," +
+            "'/ad/','vast','pre-roll','preroll','popunder'];" +
+            "var bad=function(u){u=String(u||'').toLowerCase();for(var i=0;i<marks.length;i++)" +
+            "if(u.indexOf(marks[i])>=0)return true;return false};" +
+            "window.open=function(){return null};" +
+            "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?" +
+            "e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href,location.href);" +
+            "if((u.protocol==='http:'||u.protocol==='https:')&&u.host!==location.host){" +
+            "e.preventDefault();e.stopImmediatePropagation();return false}" +
+            "if(a.target==='_blank')a.removeAttribute('target')}catch(x){}},true);" +
+            "var purge=function(doc){var fs=doc.querySelectorAll('iframe[src],script[src]');" +
+            "for(var i=0;i<fs.length;i++){if(bad(fs[i].src)){try{fs[i].remove()}catch(x){}}}};" +
+            "purge(document);if(window.MutationObserver)new MutationObserver(function(){purge(document)})" +
+            ".observe(document.documentElement,{childList:true,subtree:true});" +
+            "var bind=function(doc){if(!doc||doc.__ddmjFullscreenBound)return;" +
             "doc.__ddmjFullscreenBound=true;doc.addEventListener('play',function(e){var v=e.target;" +
-            "if(!v||String(v.tagName).toLowerCase()!=='video')return;" +
+            "if(!v||String(v.tagName).toLowerCase()!=='video'||bad(v.currentSrc||v.src))return;" +
+            "if(v.clientWidth>0&&(v.clientWidth<240||v.clientHeight<120))return;" +
             "var f=v.requestFullscreen||v.webkitRequestFullscreen||v.webkitEnterFullscreen;" +
             "if(f){try{var p=f.call(v);if(p&&p.catch)p.catch(function(){})}catch(x){}}},true);" +
             "var fs=doc.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){try{bind(fs[i].contentDocument)}catch(x){}}};" +
@@ -118,6 +137,7 @@ public final class AvseeChannelView extends FrameLayout {
     private int cleanCaptureAttempts;
     private int lastMediaScore = Integer.MIN_VALUE;
     private String lockedContentHost = "";
+    private String lastTrustedUrl = "";
     private View fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
     private int previousSystemUiVisibility;
@@ -222,7 +242,7 @@ public final class AvseeChannelView extends FrameLayout {
         settings.setLoadsImagesAutomatically(true);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setSupportMultipleWindows(false);
+        settings.setSupportMultipleWindows(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setUserAgentString(MOBILE_UA);
         CookieManager.getInstance().setAcceptCookie(true);
@@ -241,9 +261,23 @@ public final class AvseeChannelView extends FrameLayout {
             @Override public void onHideCustomView() {
                 exitFullscreen();
             }
+
+            @Override public boolean onCreateWindow(WebView view, boolean isDialog,
+                                                    boolean isUserGesture, Message resultMsg) {
+                status.setText("광고 팝업을 차단했습니다.");
+                return false;
+            }
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (shouldBlockExternalNavigation(Uri.parse(url))) {
+                    view.stopLoading();
+                    String safeUrl = lastTrustedUrl.isEmpty() ?
+                            AvseeSettings.getBaseUrl(activity) : lastTrustedUrl;
+                    view.post(() -> view.loadUrl(safeUrl));
+                    status.setText("광고 페이지 이동을 차단하고 영상 페이지로 돌아갑니다.");
+                    return;
+                }
                 if (!sameDocumentUrl(metadataPageUrl, url)) {
                     pageTitle = "";
                     pageThumb = "";
@@ -265,20 +299,21 @@ public final class AvseeChannelView extends FrameLayout {
                 String scheme = uri.getScheme();
                 if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
                     if (request.isForMainFrame() && shouldBlockExternalNavigation(uri)) {
-                        Toast.makeText(activity, "외부 광고 페이지 이동을 차단했습니다.",
+                        status.setText("외부 광고 페이지 이동을 차단했습니다.");
+                        Toast.makeText(activity, "광고 페이지 이동을 차단했습니다.",
                                 Toast.LENGTH_SHORT).show();
                         return true;
                     }
                     return false;
                 }
-                try { activity.startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
-                catch (Exception ignored) { }
+                status.setText("외부 앱을 여는 광고 요청을 차단했습니다.");
                 return true;
             }
 
             @Override public WebResourceResponse shouldInterceptRequest(
                     WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                if (isLikelyAdUrl(url)) return emptyWebResponse();
                 if (isMediaRequest(request)) rememberMedia(url, request.getRequestHeaders());
                 return super.shouldInterceptRequest(view, request);
             }
@@ -289,6 +324,9 @@ public final class AvseeChannelView extends FrameLayout {
                     clearHistoryOnNextPage = false;
                 }
                 rememberContentHost(url);
+                if (isHttpsUrl(url) && !shouldBlockExternalNavigation(Uri.parse(url))) {
+                    lastTrustedUrl = url;
+                }
                 view.evaluateJavascript(FULLSCREEN_SCRIPT, ignored -> { });
                 if (cleanCaptureInProgress) {
                     view.getSettings().setJavaScriptEnabled(true);
@@ -468,6 +506,7 @@ public final class AvseeChannelView extends FrameLayout {
         cleanCaptureInProgress = false;
         cleanCaptureAttempts = 0;
         lockedContentHost = "";
+        lastTrustedUrl = "";
         webView.getSettings().setJavaScriptEnabled(true);
         webView.stopLoading();
         webView.loadUrl(AvseeSettings.getBaseUrl(activity));
@@ -543,16 +582,26 @@ public final class AvseeChannelView extends FrameLayout {
     }
 
     private void rememberContentHost(String url) {
-        if (!isBoardPostUrl(url)) return;
+        if (!isHttpsUrl(url)) return;
         try {
             String host = Uri.parse(url).getHost();
-            if (host != null && !host.isEmpty()) lockedContentHost = host.toLowerCase(Locale.US);
+            String configured = Uri.parse(AvseeSettings.getBaseUrl(activity)).getHost();
+            if (host != null && hostMatches(configured, host) && lockedContentHost.isEmpty()) {
+                lockedContentHost = host.toLowerCase(Locale.US);
+            }
         } catch (Exception ignored) { }
     }
 
     private boolean shouldBlockExternalNavigation(Uri uri) {
-        if (lockedContentHost.isEmpty() || uri == null || uri.getHost() == null) return false;
-        return !hostMatches(lockedContentHost, uri.getHost());
+        if (uri == null || uri.getHost() == null) return false;
+        String configured;
+        try {
+            configured = Uri.parse(AvseeSettings.getBaseUrl(activity)).getHost();
+        } catch (Exception ignored) {
+            configured = "";
+        }
+        String allowed = lockedContentHost.isEmpty() ? configured : lockedContentHost;
+        return !hostMatches(allowed, uri.getHost());
     }
 
     private static boolean hostMatches(String allowed, String actual) {
@@ -561,16 +610,23 @@ public final class AvseeChannelView extends FrameLayout {
         return !a.isEmpty() && (b.equals(a) || b.endsWith("." + a) || a.endsWith("." + b));
     }
 
-    private static boolean isBoardPostUrl(String url) {
-        if (!isHttpsUrl(url)) return false;
-        try {
-            Uri uri = Uri.parse(url);
-            String path = uri.getPath();
-            return path != null && path.toLowerCase(Locale.US).endsWith("/board.php") &&
-                    uri.getQueryParameter("wr_id") != null;
-        } catch (Exception ignored) {
-            return false;
+    private static boolean isLikelyAdUrl(String url) {
+        String lower = url == null ? "" : url.toLowerCase(Locale.US);
+        String[] markers = {
+                "doubleclick", "googlesyndication", "googleadservices", "exoclick",
+                "exosrv", "popads", "propellerads", "adsterra", "trafficjunky",
+                "juicyads", "popcash", "/ads/", "/ad/", "vast", "pre-roll",
+                "preroll", "popunder"
+        };
+        for (String marker : markers) {
+            if (lower.contains(marker)) return true;
         }
+        return false;
+    }
+
+    private static WebResourceResponse emptyWebResponse() {
+        return new WebResourceResponse("text/plain", "UTF-8",
+                new ByteArrayInputStream(new byte[0]));
     }
 
     private static int scoreMediaCandidate(String url, Map<String, String> headers) {
