@@ -98,10 +98,13 @@ public final class AvseeChannelView extends FrameLayout {
             "'/ad/','vast','pre-roll','preroll','popunder'];" +
             "var bad=function(u){u=String(u||'').toLowerCase();for(var i=0;i<marks.length;i++)" +
             "if(u.indexOf(marks[i])>=0)return true;return false};" +
-            "window.open=function(){return null};" +
+            "var guide=/접속주소안내|최신\\s*AVseeTV/i.test((document.body&&document.body.innerText||'').slice(0,3000));" +
+            "if(!guide)window.open=function(){return null};" +
             "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?" +
             "e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href,location.href);" +
-            "if((u.protocol==='http:'||u.protocol==='https:')&&u.host!==location.host){" +
+            "if(guide&&u.host.toLowerCase().indexOf('avsee')>=0){" +
+            "e.preventDefault();e.stopImmediatePropagation();location.href=u.href;return false}" +
+            "if(!guide&&(u.protocol==='http:'||u.protocol==='https:')&&u.host!==location.host){" +
             "e.preventDefault();e.stopImmediatePropagation();return false}" +
             "if(a.target==='_blank')a.removeAttribute('target')}catch(x){}},true);" +
             "var purge=function(doc){var fs=doc.querySelectorAll('iframe[src],script[src]');" +
@@ -264,13 +267,36 @@ public final class AvseeChannelView extends FrameLayout {
 
             @Override public boolean onCreateWindow(WebView view, boolean isDialog,
                                                     boolean isUserGesture, Message resultMsg) {
-                status.setText("광고 팝업을 차단했습니다.");
-                return false;
+                WebView popup = new WebView(activity);
+                popup.setWebViewClient(new WebViewClient() {
+                    @Override public boolean shouldOverrideUrlLoading(
+                            WebView popupView, WebResourceRequest request) {
+                        Uri uri = request.getUrl();
+                        if (isAddressGuideNavigation(uri)) {
+                            trustAvseeDestination(uri);
+                            webView.post(() -> webView.loadUrl(uri.toString()));
+                            status.setText("최신 AVseeTV 주소로 이동합니다.");
+                        } else {
+                            status.setText("광고 팝업을 차단했습니다.");
+                        }
+                        popupView.destroy();
+                        return true;
+                    }
+                });
+                WebView.WebViewTransport transport =
+                        (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(popup);
+                resultMsg.sendToTarget();
+                return true;
             }
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                if (shouldBlockExternalNavigation(Uri.parse(url))) {
+                Uri startedUri = Uri.parse(url);
+                if (isAddressGuideNavigation(startedUri)) {
+                    trustAvseeDestination(startedUri);
+                }
+                if (shouldBlockExternalNavigation(startedUri)) {
                     view.stopLoading();
                     String safeUrl = lastTrustedUrl.isEmpty() ?
                             AvseeSettings.getBaseUrl(activity) : lastTrustedUrl;
@@ -298,6 +324,11 @@ public final class AvseeChannelView extends FrameLayout {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme();
                 if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    if (request.isForMainFrame() && isAddressGuideNavigation(uri)) {
+                        trustAvseeDestination(uri);
+                        status.setText("최신 AVseeTV 주소로 이동합니다.");
+                        return false;
+                    }
                     if (request.isForMainFrame() && shouldBlockExternalNavigation(uri)) {
                         status.setText("외부 광고 페이지 이동을 차단했습니다.");
                         Toast.makeText(activity, "광고 페이지 이동을 차단했습니다.",
@@ -592,6 +623,47 @@ public final class AvseeChannelView extends FrameLayout {
         } catch (Exception ignored) { }
     }
 
+    private boolean isAddressGuideNavigation(Uri destination) {
+        if (destination == null || destination.getHost() == null ||
+                !isLikelyAvseeHost(destination.getHost()) ||
+                isLikelyAdUrl(destination.toString())) return false;
+        String configured;
+        try {
+            configured = Uri.parse(AvseeSettings.getBaseUrl(activity)).getHost();
+        } catch (Exception ignored) {
+            return false;
+        }
+        return isAddressGuideUrl(webView.getUrl(), configured) ||
+                isAddressGuideUrl(lastTrustedUrl, configured);
+    }
+
+    private static boolean isAddressGuideUrl(String url, String configuredHost) {
+        if (!isHttpsUrl(url)) return false;
+        try {
+            String host = Uri.parse(url).getHost();
+            if (!hostMatches(configuredHost, host)) return false;
+            String firstLabel = host == null ? "" :
+                    host.toLowerCase(Locale.US).split("\\.")[0];
+            return firstLabel.startsWith("url");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isLikelyAvseeHost(String host) {
+        if (host == null) return false;
+        for (String label : host.toLowerCase(Locale.US).split("\\.")) {
+            if ("avsee".equals(label) || label.matches("avsee\\d+")) return true;
+        }
+        return false;
+    }
+
+    private void trustAvseeDestination(Uri uri) {
+        if (uri == null || uri.getHost() == null) return;
+        lockedContentHost = uri.getHost().toLowerCase(Locale.US);
+        lastTrustedUrl = uri.toString();
+    }
+
     private boolean shouldBlockExternalNavigation(Uri uri) {
         if (uri == null || uri.getHost() == null) return false;
         String configured;
@@ -600,8 +672,8 @@ public final class AvseeChannelView extends FrameLayout {
         } catch (Exception ignored) {
             configured = "";
         }
-        String allowed = lockedContentHost.isEmpty() ? configured : lockedContentHost;
-        return !hostMatches(allowed, uri.getHost());
+        return !hostMatches(configured, uri.getHost()) &&
+                !hostMatches(lockedContentHost, uri.getHost());
     }
 
     private static boolean hostMatches(String allowed, String actual) {
