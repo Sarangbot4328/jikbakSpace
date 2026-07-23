@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat;
 
 import com.webtoonmap.mobile.MainActivity;
 import com.webtoonmap.mobile.data.AvseeLibraryDatabase;
+import com.webtoonmap.mobile.data.AvseeMetadata;
 import com.webtoonmap.mobile.storage.AvseeStorage;
 
 import java.io.File;
@@ -166,7 +167,8 @@ public final class AvseeDownloadService extends Service {
 
             String createdAt = utcNow();
             db.insert(nonEmpty(job.title, "AVSee 영상"), video.getAbsolutePath(), thumbnailPath,
-                    job.pageUrl, job.tags, job.actors, job.description, createdAt, size);
+                    job.pageUrl, job.tags, AvseeMetadata.cleanActors(job.actors),
+                    job.description, createdAt, size);
             if (activeFolder == folder) activeFolder = null;
             sendStatus("다운로드 완료 · " + nonEmpty(job.title, "AVSee 영상"), true, false);
             updateNotification("다운로드 완료", 0, 0);

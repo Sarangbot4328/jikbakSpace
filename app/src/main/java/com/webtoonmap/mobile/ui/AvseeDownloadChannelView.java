@@ -24,6 +24,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import com.webtoonmap.mobile.MainActivity;
 import com.webtoonmap.mobile.R;
 import com.webtoonmap.mobile.data.AvseeLibraryDatabase;
+import com.webtoonmap.mobile.data.AvseeMetadata;
 import com.webtoonmap.mobile.data.AvseeVideo;
 import com.webtoonmap.mobile.download.AvseeDownloadService;
 import com.webtoonmap.mobile.storage.AvseeStorage;
@@ -190,7 +191,7 @@ public final class AvseeDownloadChannelView extends FrameLayout {
             AvseeVideo video = items.get(position);
             holder.title.setText(video.title);
             holder.meta.setText(AvseeStorage.formatBytes(video.sizeBytes) + " · " + shortDate(video.createdAt));
-            String detail = joinDetail(video.actors, video.tags);
+            String detail = joinDetail(AvseeMetadata.cleanActors(video.actors), video.tags);
             holder.detail.setText(detail.isEmpty() ? "AVSee 다운로드 영상" : detail);
             holder.thumbnail.setImageDrawable(null);
             if (video.thumbnailPath != null && new File(video.thumbnailPath).isFile()) {

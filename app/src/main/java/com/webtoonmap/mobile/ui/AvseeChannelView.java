@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Message;
 import android.view.Gravity;
@@ -22,6 +23,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ProgressBar;
@@ -33,6 +35,7 @@ import androidx.core.content.ContextCompat;
 
 import com.webtoonmap.mobile.MainActivity;
 import com.webtoonmap.mobile.R;
+import com.webtoonmap.mobile.data.AvseeMetadata;
 import com.webtoonmap.mobile.download.AvseeDownloadService;
 import com.webtoonmap.mobile.storage.AvseeSettings;
 
@@ -57,10 +60,18 @@ public final class AvseeChannelView extends FrameLayout {
             "var texts=function(s){var out=[],seen={};var es=document.querySelectorAll(s);" +
             "for(var i=0;i<es.length&&out.length<20;i++){var t=clean(es[i].textContent||es[i].content);" +
             "if(t&&t.length<100&&!seen[t]){seen[t]=1;out.push(t)}}return out};" +
-            "var labeled=function(labels){var es=document.querySelectorAll('tr,dt,li,p,.info-row,.meta-row');" +
-            "for(var i=0;i<es.length;i++){var t=clean(es[i].innerText);if(!t||t.length>300)continue;" +
-            "for(var j=0;j<labels.length;j++){if(t.indexOf(labels[j])===0){var c=t.indexOf(':');" +
-            "if(c<0)c=t.indexOf('：');return clean(c>=0?t.substring(c+1):t.substring(labels[j].length))}}}return''};" +
+            "var field=function(labels){var same=function(v){v=clean(v).replace(/[:：]$/,'').toLowerCase();" +
+            "for(var i=0;i<labels.length;i++)if(v===labels[i].toLowerCase())return true;return false};" +
+            "var rows=document.querySelectorAll('tr');for(var i=0;i<rows.length;i++){" +
+            "var cells=rows[i].querySelectorAll('th,td');if(cells.length>1&&same(cells[0].innerText))" +
+            "return clean(cells[1].innerText)}var terms=document.querySelectorAll('dt');" +
+            "for(var i=0;i<terms.length;i++){if(same(terms[i].innerText)){var n=terms[i].nextElementSibling;" +
+            "if(n&&String(n.tagName).toLowerCase()==='dd')return clean(n.innerText)}}" +
+            "var keys=document.querySelectorAll('.label,.tit,.meta-label,.info-label,strong,b');" +
+            "for(var i=0;i<keys.length;i++){if(!same(keys[i].innerText))continue;var p=keys[i].parentElement;" +
+            "if(!p)continue;var v=p.querySelector('.value,.text,.cont,.content,.meta-value,.info-value');" +
+            "if(v&&v!==keys[i])return clean(v.innerText);var n=keys[i].nextElementSibling;" +
+            "if(n)return clean(n.innerText)}return''};" +
             "var ld={};var take=function(x){if(!x)return;if(Array.isArray(x)){for(var i=0;i<x.length;i++)take(x[i]);return}" +
             "if(typeof x!=='object')return;var ty=clean(x['@type']).toLowerCase();" +
             "if(ty.indexOf('video')>=0&&!ld.name)ld=x;if(x['@graph'])take(x['@graph'])};" +
@@ -80,11 +91,18 @@ public final class AvseeChannelView extends FrameLayout {
             "var thumb=ld.thumbnailUrl||ld.thumbnail||m('og:image')||m('twitter:image');if(Array.isArray(thumb))thumb=thumb[0];" +
             "if(!thumb){var pv=q('video[poster]');thumb=pv?pv.poster:''}" +
             "var actors=names(ld.actor||ld.actors||ld.performer);" +
-            "if(!actors)actors=texts('.actor a,.actors a,.cast a,[class*=\\\"actor\\\"] a,[class*=\\\"cast\\\"] a').join(', ');" +
-            "if(!actors)actors=labeled(['배우','출연','Actor','Cast']);" +
+            "if(!actors)actors=texts('[itemprop=\\\"actor\\\"],[itemprop=\\\"performer\\\"]," +
+            "[itemprop=\\\"actor\\\"] [itemprop=\\\"name\\\"],.actor a,.actors a,.actor-name," +
+            ".actress a,.performer a,.cast a,.star-name,a[href*=\\\"/actor/\\\"]," +
+            "a[href*=\\\"/actress/\\\"],[class*=\\\"actor\\\"] a,[class*=\\\"cast\\\"] a').join(', ');" +
+            "if(!actors)actors=field(['배우','배우명','여배우','출연','출연자'," +
+            "'Actor','Actress','Cast','Starring']);actors=clean(actors);" +
+            "var productAt=actors.search(/품번|작품번호/);if(productAt>=0)actors=clean(" +
+            "actors.substring(0,productAt).replace(/(?:및|\\/|·|\\|)\\s*$/,''));" +
+            "if(!actors||actors==='및'||/(?:등록합니다|댓글|문의|요청|알려\\s*주세요)/.test(actors))actors='';" +
             "var tags=Array.isArray(ld.keywords)?ld.keywords.join(', '):clean(ld.keywords);" +
             "if(!tags)tags=m('keywords');if(!tags)tags=texts('a[rel=\\\"tag\\\"],.tags a,.tag-list a,.genre a').join(', ');" +
-            "if(!tags)tags=labeled(['태그','장르','카테고리','Tags','Genre']);" +
+            "if(!tags)tags=field(['태그','장르','카테고리','Tags','Genre']);" +
             "var desc=clean(ld.description)||m('og:description')||m('description');" +
             "if(!desc){var de=q('.video-description,.description,[class*=\\\"description\\\"]');desc=de?clean(de.textContent):''}" +
             "return JSON.stringify({title:clean(ld.name)||m('og:title')||clean(document.title)||'AVSee 영상'," +
@@ -101,16 +119,10 @@ public final class AvseeChannelView extends FrameLayout {
             "var guide=/접속주소안내|최신\\s*AVseeTV/i.test((document.body&&document.body.innerText||'').slice(0,3000));" +
             "if(!guide)window.open=function(){return null};" +
             "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?" +
-            "e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href,location.href);" +
-            "if(guide&&u.host.toLowerCase().indexOf('avsee')>=0){" +
+            "e.target.closest('a[href]'):null;if(!a||!guide)return;try{var u=new URL(a.href,location.href);" +
+            "if(u.host.toLowerCase().indexOf('avsee')>=0){" +
             "e.preventDefault();e.stopImmediatePropagation();location.href=u.href;return false}" +
-            "if(!guide&&(u.protocol==='http:'||u.protocol==='https:')&&u.host!==location.host){" +
-            "e.preventDefault();e.stopImmediatePropagation();return false}" +
-            "if(a.target==='_blank')a.removeAttribute('target')}catch(x){}},true);" +
-            "var purge=function(doc){var fs=doc.querySelectorAll('iframe[src],script[src]');" +
-            "for(var i=0;i<fs.length;i++){if(bad(fs[i].src)){try{fs[i].remove()}catch(x){}}}};" +
-            "purge(document);if(window.MutationObserver)new MutationObserver(function(){purge(document)})" +
-            ".observe(document.documentElement,{childList:true,subtree:true});" +
+            "}catch(x){}},true);" +
             "var bind=function(doc){if(!doc||doc.__ddmjFullscreenBound)return;" +
             "doc.__ddmjFullscreenBound=true;doc.addEventListener('play',function(e){var v=e.target;" +
             "if(!v||String(v.tagName).toLowerCase()!=='video'||bad(v.currentSrc||v.src))return;" +
@@ -142,6 +154,7 @@ public final class AvseeChannelView extends FrameLayout {
     private String lockedContentHost = "";
     private String lastTrustedUrl = "";
     private View fullscreenView;
+    private FrameLayout fullscreenContainer;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
     private int previousSystemUiVisibility;
     private int previousOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
@@ -344,7 +357,6 @@ public final class AvseeChannelView extends FrameLayout {
             @Override public WebResourceResponse shouldInterceptRequest(
                     WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                if (isLikelyAdUrl(url)) return emptyWebResponse();
                 if (isMediaRequest(request)) rememberMedia(url, request.getRequestHeaders());
                 return super.shouldInterceptRequest(view, request);
             }
@@ -429,7 +441,8 @@ public final class AvseeChannelView extends FrameLayout {
                 String capturedTitle = clean(object.optString("title", ""));
                 String capturedThumb = clean(object.optString("thumb", ""));
                 String capturedTags = clean(object.optString("tags", ""));
-                String capturedActors = clean(object.optString("actors", ""));
+                String capturedActors = AvseeMetadata.cleanActors(
+                        object.optString("actors", ""));
                 String capturedDescription = clean(object.optString("description", ""));
                 if (!capturedTitle.isEmpty()) pageTitle = capturedTitle;
                 if (!capturedThumb.isEmpty()) pageThumb = capturedThumb;
@@ -549,8 +562,18 @@ public final class AvseeChannelView extends FrameLayout {
         if (fullscreenView == null) return;
         View view = fullscreenView;
         fullscreenView = null;
-        ViewParent parent = view.getParent();
-        if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
+        FrameLayout container = fullscreenContainer;
+        fullscreenContainer = null;
+        if (container != null) {
+            container.removeView(view);
+            ViewParent containerParent = container.getParent();
+            if (containerParent instanceof ViewGroup) {
+                ((ViewGroup) containerParent).removeView(container);
+            }
+        } else {
+            ViewParent parent = view.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
+        }
         View decor = activity.getWindow().getDecorView();
         decor.setSystemUiVisibility(previousSystemUiVisibility);
         activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN |
@@ -574,7 +597,29 @@ public final class AvseeChannelView extends FrameLayout {
         ViewParent parent = view.getParent();
         if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
         view.setBackgroundColor(Color.BLACK);
-        ((ViewGroup) decor).addView(view, new ViewGroup.LayoutParams(
+
+        FrameLayout container = new FrameLayout(activity);
+        container.setBackgroundColor(Color.BLACK);
+        fullscreenContainer = container;
+        container.addView(view, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        ImageButton exitButton = new ImageButton(activity);
+        exitButton.setImageResource(R.drawable.ic_player_fullscreen_exit);
+        exitButton.setContentDescription("전체화면 종료");
+        exitButton.setPadding(dp(11), dp(11), dp(11), dp(11));
+        GradientDrawable exitBackground = new GradientDrawable();
+        exitBackground.setColor(0x99000000);
+        exitBackground.setShape(GradientDrawable.OVAL);
+        exitButton.setBackground(exitBackground);
+        exitButton.setOnClickListener(ignored -> exitFullscreen());
+        FrameLayout.LayoutParams exitParams = new FrameLayout.LayoutParams(dp(46), dp(46));
+        exitParams.gravity = Gravity.END | Gravity.BOTTOM;
+        exitParams.setMargins(dp(10), dp(10), dp(12), dp(12));
+        container.addView(exitButton, exitParams);
+
+        ((ViewGroup) decor).addView(container, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN |
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
@@ -665,15 +710,7 @@ public final class AvseeChannelView extends FrameLayout {
     }
 
     private boolean shouldBlockExternalNavigation(Uri uri) {
-        if (uri == null || uri.getHost() == null) return false;
-        String configured;
-        try {
-            configured = Uri.parse(AvseeSettings.getBaseUrl(activity)).getHost();
-        } catch (Exception ignored) {
-            configured = "";
-        }
-        return !hostMatches(configured, uri.getHost()) &&
-                !hostMatches(lockedContentHost, uri.getHost());
+        return uri != null && isLikelyAdUrl(uri.toString());
     }
 
     private static boolean hostMatches(String allowed, String actual) {
@@ -685,10 +722,9 @@ public final class AvseeChannelView extends FrameLayout {
     private static boolean isLikelyAdUrl(String url) {
         String lower = url == null ? "" : url.toLowerCase(Locale.US);
         String[] markers = {
-                "doubleclick", "googlesyndication", "googleadservices", "exoclick",
-                "exosrv", "popads", "propellerads", "adsterra", "trafficjunky",
-                "juicyads", "popcash", "/ads/", "/ad/", "vast", "pre-roll",
-                "preroll", "popunder"
+                "doubleclick.net", "googlesyndication.com", "googleadservices.com",
+                "exoclick", "exosrv", "popads", "propellerads", "adsterra",
+                "trafficjunky", "juicyads", "popcash", "popunder"
         };
         for (String marker : markers) {
             if (lower.contains(marker)) return true;
@@ -696,10 +732,6 @@ public final class AvseeChannelView extends FrameLayout {
         return false;
     }
 
-    private static WebResourceResponse emptyWebResponse() {
-        return new WebResourceResponse("text/plain", "UTF-8",
-                new ByteArrayInputStream(new byte[0]));
-    }
 
     private static int scoreMediaCandidate(String url, Map<String, String> headers) {
         String lower = url == null ? "" : url.toLowerCase(Locale.US);

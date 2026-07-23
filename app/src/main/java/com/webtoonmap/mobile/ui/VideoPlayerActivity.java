@@ -27,6 +27,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.webtoonmap.mobile.R;
+import com.webtoonmap.mobile.data.AvseeMetadata;
 import com.webtoonmap.mobile.storage.AvseeStorage;
 
 import java.io.File;
@@ -177,7 +178,8 @@ public final class VideoPlayerActivity extends AppCompatActivity {
             thumbnail.setVisibility(View.GONE);
         }
 
-        String actors = clean(getIntent().getStringExtra(EXTRA_ACTORS));
+        String actors = AvseeMetadata.cleanActors(
+                getIntent().getStringExtra(EXTRA_ACTORS));
         String tags = clean(getIntent().getStringExtra(EXTRA_TAGS));
         String description = clean(getIntent().getStringExtra(EXTRA_DESCRIPTION));
 
