@@ -49,8 +49,23 @@ public final class AvseeChannelView extends FrameLayout {
     private static final String PAGE_SCRIPT =
             "(function(){try{" +
             "var q=function(s){return document.querySelector(s)};" +
-            "var m=function(n){var e=q('meta[property=\\\"'+n+'\\\"]');return e?e.content:''};" +
+            "var clean=function(v){return String(v||'').replace(/\\s+/g,' ').trim()};" +
+            "var m=function(n){var e=q('meta[property=\\\"'+n+'\\\"],meta[name=\\\"'+n+'\\\"]');return e?clean(e.content):''};" +
             "var abs=function(x,b){if(!x)return'';try{return new URL(x,b||location.href).href}catch(e){return''}};" +
+            "var texts=function(s){var out=[],seen={};var es=document.querySelectorAll(s);" +
+            "for(var i=0;i<es.length&&out.length<20;i++){var t=clean(es[i].textContent||es[i].content);" +
+            "if(t&&t.length<100&&!seen[t]){seen[t]=1;out.push(t)}}return out};" +
+            "var labeled=function(labels){var es=document.querySelectorAll('tr,dt,li,p,.info-row,.meta-row');" +
+            "for(var i=0;i<es.length;i++){var t=clean(es[i].innerText);if(!t||t.length>300)continue;" +
+            "for(var j=0;j<labels.length;j++){if(t.indexOf(labels[j])===0){var c=t.indexOf(':');" +
+            "if(c<0)c=t.indexOf('：');return clean(c>=0?t.substring(c+1):t.substring(labels[j].length))}}}return''};" +
+            "var ld={};var take=function(x){if(!x)return;if(Array.isArray(x)){for(var i=0;i<x.length;i++)take(x[i]);return}" +
+            "if(typeof x!=='object')return;var ty=clean(x['@type']).toLowerCase();" +
+            "if(ty.indexOf('video')>=0&&!ld.name)ld=x;if(x['@graph'])take(x['@graph'])};" +
+            "var js=document.querySelectorAll('script[type=\\\"application/ld+json\\\"]');" +
+            "for(var ji=0;ji<js.length;ji++){try{take(JSON.parse(js[ji].textContent))}catch(e){}}" +
+            "var names=function(x){if(!x)return'';if(!Array.isArray(x))x=[x];var out=[];" +
+            "for(var i=0;i<x.length;i++){var n=clean(typeof x[i]==='string'?x[i]:(x[i].name||x[i].alternateName));if(n)out.push(n)}return out.join(', ')};" +
             "var docs=[document];for(var di=0;di<docs.length;di++){var fr=docs[di].querySelectorAll('iframe');" +
             "for(var fi=0;fi<fr.length;fi++){try{if(fr[fi].contentDocument)docs.push(fr[fi].contentDocument)}catch(e){}}}" +
             "var u='';for(var di=0;di<docs.length&&!u;di++){var doc=docs[di];var vs=doc.querySelectorAll('video');" +
@@ -60,10 +75,18 @@ public final class AvseeChannelView extends FrameLayout {
             "if(!u){var es=doc.querySelectorAll('source[src],a[href],video[data-src]');for(var ei=0;ei<es.length;ei++){var z=abs(es[ei].src||es[ei].href||es[ei].getAttribute('data-src'),doc.baseURI);if(/\\.(mp4|webm|m4v|mov)(\\?|$)/i.test(z)){u=z;break}}}}" +
             "if(!u&&performance&&performance.getEntriesByType){var a=performance.getEntriesByType('resource');" +
             "for(var i=a.length-1;i>=0;i--){if(/\\.(mp4|webm|m4v|mov|m3u8)(\\?|$)/i.test(a[i].name)){u=a[i].name;break}}}" +
-            "var d=q('meta[name=description]');var k=q('meta[name=keywords]');" +
-            "return JSON.stringify({title:m('og:title')||document.title||'AVSee 영상'," +
-            "video:u,thumb:m('og:image'),description:d?d.content:'',tags:k?k.content:''," +
-            "actors:'',pageText:(document.body?document.body.innerText:'').slice(0,5000)});" +
+            "var thumb=ld.thumbnailUrl||ld.thumbnail||m('og:image')||m('twitter:image');if(Array.isArray(thumb))thumb=thumb[0];" +
+            "if(!thumb){var pv=q('video[poster]');thumb=pv?pv.poster:''}" +
+            "var actors=names(ld.actor||ld.actors||ld.performer);" +
+            "if(!actors)actors=texts('.actor a,.actors a,.cast a,[class*=\\\"actor\\\"] a,[class*=\\\"cast\\\"] a').join(', ');" +
+            "if(!actors)actors=labeled(['배우','출연','Actor','Cast']);" +
+            "var tags=Array.isArray(ld.keywords)?ld.keywords.join(', '):clean(ld.keywords);" +
+            "if(!tags)tags=m('keywords');if(!tags)tags=texts('a[rel=\\\"tag\\\"],.tags a,.tag-list a,.genre a').join(', ');" +
+            "if(!tags)tags=labeled(['태그','장르','카테고리','Tags','Genre']);" +
+            "var desc=clean(ld.description)||m('og:description')||m('description');" +
+            "if(!desc){var de=q('.video-description,.description,[class*=\\\"description\\\"]');desc=de?clean(de.textContent):''}" +
+            "return JSON.stringify({title:clean(ld.name)||m('og:title')||clean(document.title)||'AVSee 영상'," +
+            "video:u,thumb:abs(thumb),description:desc,tags:clean(tags),actors:clean(actors)});" +
             "}catch(e){return JSON.stringify({error:String(e)})}})()";
 
     private static final String FULLSCREEN_SCRIPT =
@@ -88,6 +111,7 @@ public final class AvseeChannelView extends FrameLayout {
     private String pageTags = "";
     private String pageActors = "";
     private String pageDescription = "";
+    private String metadataPageUrl = "";
     private boolean receiverRegistered;
     private boolean clearHistoryOnNextPage;
     private boolean cleanCaptureInProgress;
@@ -220,6 +244,14 @@ public final class AvseeChannelView extends FrameLayout {
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (!sameDocumentUrl(metadataPageUrl, url)) {
+                    pageTitle = "";
+                    pageThumb = "";
+                    pageTags = "";
+                    pageActors = "";
+                    pageDescription = "";
+                    metadataPageUrl = url == null ? "" : url;
+                }
                 lastMediaUrl = "";
                 lastMediaHeaders = Collections.emptyMap();
                 lastMediaScore = Integer.MIN_VALUE;
@@ -325,11 +357,16 @@ public final class AvseeChannelView extends FrameLayout {
                 Object decoded = new JSONTokener(value).nextValue();
                 String json = decoded instanceof String ? (String) decoded : value;
                 JSONObject object = new JSONObject(json);
-                pageTitle = clean(object.optString("title", webView.getTitle()));
-                pageThumb = clean(object.optString("thumb", ""));
-                pageTags = clean(object.optString("tags", ""));
-                pageActors = clean(object.optString("actors", ""));
-                pageDescription = clean(object.optString("description", ""));
+                String capturedTitle = clean(object.optString("title", ""));
+                String capturedThumb = clean(object.optString("thumb", ""));
+                String capturedTags = clean(object.optString("tags", ""));
+                String capturedActors = clean(object.optString("actors", ""));
+                String capturedDescription = clean(object.optString("description", ""));
+                if (!capturedTitle.isEmpty()) pageTitle = capturedTitle;
+                if (!capturedThumb.isEmpty()) pageThumb = capturedThumb;
+                if (!capturedTags.isEmpty()) pageTags = capturedTags;
+                if (!capturedActors.isEmpty()) pageActors = capturedActors;
+                if (!capturedDescription.isEmpty()) pageDescription = capturedDescription;
                 String detected = clean(object.optString("video", ""));
                 if (isLikelyDomMediaUrl(detected) &&
                         !sameDocumentUrl(detected, webView.getUrl())) {

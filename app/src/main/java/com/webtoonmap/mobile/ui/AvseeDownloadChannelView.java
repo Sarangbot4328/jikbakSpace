@@ -128,7 +128,13 @@ public final class AvseeDownloadChannelView extends FrameLayout {
         }
         Intent intent = new Intent(activity, VideoPlayerActivity.class)
                 .putExtra(VideoPlayerActivity.EXTRA_TITLE, video.title)
-                .putExtra(VideoPlayerActivity.EXTRA_PATH, video.filePath);
+                .putExtra(VideoPlayerActivity.EXTRA_PATH, video.filePath)
+                .putExtra(VideoPlayerActivity.EXTRA_THUMBNAIL_PATH, video.thumbnailPath)
+                .putExtra(VideoPlayerActivity.EXTRA_TAGS, video.tags)
+                .putExtra(VideoPlayerActivity.EXTRA_ACTORS, video.actors)
+                .putExtra(VideoPlayerActivity.EXTRA_DESCRIPTION, video.description)
+                .putExtra(VideoPlayerActivity.EXTRA_CREATED_AT, video.createdAt)
+                .putExtra(VideoPlayerActivity.EXTRA_SIZE_BYTES, video.sizeBytes);
         activity.startActivity(intent);
     }
 
